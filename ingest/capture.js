@@ -138,14 +138,15 @@ function preciosCatalogo(catalogo, mapa) {
 }
 
 // Último cierre con precios anterior a `fecha`.
+// Filtra sólo por `date` (un solo campo) para no necesitar índice compuesto;
+// isEod/prices se filtran en código.
 async function ultimoCierreAntesDe(db, fecha) {
   const snap = await db.collection('quotes')
-    .where('isEod', '==', true)
     .where('date', '<', fecha)
     .orderBy('date', 'desc')
-    .limit(10)
+    .limit(15)
     .get();
-  for (const d of snap.docs) { const x = d.data(); if (x.prices) return x; }
+  for (const d of snap.docs) { const x = d.data(); if (x.isEod && x.prices) return x; }
   return null;
 }
 
