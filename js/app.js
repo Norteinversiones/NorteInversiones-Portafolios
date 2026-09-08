@@ -147,7 +147,7 @@
       : isIos() && !isStandalone() ? '<div class="installtip"><b>Para instalarla en tu iPhone:</b> tocá el botón Compartir de Safari y elegí "Agregar a inicio".</div>' : '';
     setView('<h1>Hola' + (S.session && S.session.name ? ', ' + h(S.session.name.split(' ')[0]) : '') + '</h1><p class="muted">Tres portafolios sugeridos, actualizados todos los meses. Valores en ' + (S.moneda === 'USD' ? 'dólares (CCL)' : 'pesos') + '.</p>' +
       '<div class="pcards">' + cards + '</div>' +
-      '<p><a class="btn sec" href="#/comparar">Comparar los tres</a> <a class="btn sec" href="#/aprender">Entender los instrumentos</a></p>' + install + legalFoot());
+      '<p><a class="btn sec" href="#/comparar">Comparar los tres</a></p>' + install + legalFoot());
     var bi = $('btnInstall'); if (bi) bi.onclick = async function () { S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; renderHome(); };
   }
   function isIos() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
@@ -185,7 +185,7 @@
       var ins = S.insMap[x.ticker] || {};
       var buy = S.moneda === 'USD' ? E.fmtUsd(x.buyUsd) : E.fmtArs(x.buyArs), now = S.moneda === 'USD' ? E.fmtUsd(x.nowUsd) : E.fmtArs(x.nowArs);
       var v = S.moneda === 'USD' ? x.varUsd : x.varArs;
-      return '<div class="holding"><div class="hl"><div class="tk">' + h(x.ticker) + (ins.type ? '<span class="tipo" data-ficha="' + h(ins.educationSlug || ins.type.toLowerCase().replace('_', '-')) + '">' + h(tipo(ins.type)) + '</span>' : '') + '</div><div class="nm">' + h(ins.name || '') + '</div>' +
+      return '<div class="holding"><div class="hl"><div class="tk">' + h(x.ticker) + (ins.type ? '<span class="tipo">' + h(tipo(ins.type)) + '</span>' : '') + '</div><div class="nm">' + h(ins.name || '') + '</div>' +
         '<div class="px"><span class="l">Precio de compra</span><b>' + buy + '</b></div>' +
         '<div class="px"><span class="l">Precio actual</span><b>' + now + '</b>' + (x.stale ? ' <span class="stale">al ' + E.fmtDate(x.asOf) + '</span>' : '') + '</div></div>' +
         '<div class="hc"><div class="l">Tenencia</div><div class="v">' + E.fmtNum(x.weightPct, 0) + '%</div></div>' +
@@ -193,7 +193,7 @@
     }).join('');
     var comp = E.compositionByType(cur.holdings, S.insMap).map(function (c) { return { label: tipo(c.type), value: c.weightPct }; });
     return '<div class="card"><h3>Composición</h3>' + C.donut({ slices: comp }) + '</div>' +
-      '<div class="card"><h3>Activos</h3><p class="legal">Variación de cada activo desde su precio de compra, en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '. Tocá el tipo de instrumento para saber qué es.</p>' + rows + delayNote() + '</div>' +
+      '<div class="card"><h3>Activos</h3><p class="legal">Resultado de cada activo desde su precio de compra, en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '.</p>' + rows + delayNote() + '</div>' +
       (cur.rationale ? '<div class="card"><h3>Por qué esta composición</h3><p>' + h(cur.rationale).replace(/\n/g, '<br>') + '</p></div>' : '');
   }
 
@@ -290,19 +290,20 @@
     var hists = {}; S.portfolios.forEach(function (p) { hists[p.slug] = historyOf(p.slug); });
     var yms = {}; S.portfolios.forEach(function (p) { hists[p.slug].months.forEach(function (m) { yms[m.ym] = 1; }); });
     var labels = Object.keys(yms).sort();
-    var colors = ['#111111', '#8A8A8A', '#FFD600'];
+    // Colores de identificación de cada portafolio (por nivel de riesgo): verde, amarillo, rojo.
+    var colors = S.portfolios.map(function (p) { return p.riskLevel === 1 ? '#1E8E3E' : p.riskLevel === 3 ? '#D93025' : '#FFD600'; });
     var series = S.portfolios.map(function (p, i) {
       var map = {}; hists[p.slug].months.forEach(function (m) { map[m.ym] = S.moneda === 'USD' ? m.accUsd : m.accArs; });
-      return { name: p.name, color: colors[i % 3], points: labels.map(function (l) { return map[l] != null ? map[l] : null; }) };
+      return { name: p.name, color: colors[i], points: labels.map(function (l) { return map[l] != null ? map[l] : null; }) };
     });
     var rows = S.portfolios.map(function (p, i) {
       var hst = hists[p.slug], st = p.stats || {}, cur = st.current;
       var y = hst.yearTotals[hst.yearTotals.length - 1];
-      return '<tr><td><b style="border-left:4px solid ' + colors[i % 3] + ';padding-left:8px">' + h(p.name) + '</b></td><td class="num ' + pc(cur ? mv(cur) : null) + '">' + E.fmtPct(cur ? mv(cur) : null, 1) + '</td><td class="num ' + pc(y ? mv(y) : null) + '">' + E.fmtPct(y ? mv(y) : null, 1) + '</td><td class="num ' + pc(mv(hst.accumulated)) + '"><b>' + E.fmtPct(mv(hst.accumulated), 1) + '</b></td></tr>';
+      return '<tr><td><b style="border-left:4px solid ' + colors[i] + ';padding-left:8px">' + h(p.name) + '</b></td><td class="num ' + pc(cur ? mv(cur) : null) + '">' + E.fmtPct(cur ? mv(cur) : null, 1) + '</td><td class="num ' + pc(y ? mv(y) : null) + '">' + E.fmtPct(y ? mv(y) : null, 1) + '</td><td class="num ' + pc(mv(hst.accumulated)) + '"><b>' + E.fmtPct(mv(hst.accumulated), 1) + '</b></td></tr>';
     }).join('');
     var y0 = hists[S.portfolios[0].slug].yearTotals.slice(-1)[0];
     setView('<h1>Comparar</h1><p class="muted">Acumulado compuesto de los tres portafolios en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '.</p>' +
-      '<div class="card"><div class="comparar-legend">' + S.portfolios.map(function (p, i) { return '<span style="--c:' + colors[i % 3] + '">' + h(p.name) + '</span>'; }).join('') + '</div>' + C.lines({ series: series, labels: labels.map(E.fmtMonth) }) + '</div>' +
+      '<div class="card"><div class="comparar-legend">' + S.portfolios.map(function (p, i) { return '<span style="--c:' + colors[i] + '">' + h(p.name) + '</span>'; }).join('') + '</div>' + C.lines({ series: series, labels: labels.map(E.fmtMonth) }) + '</div>' +
       '<div class="card"><div class="tablewrap"><table><thead><tr><th>Portafolio</th><th class="num">Mes en curso</th><th class="num">' + (y0 ? y0.year : 'Año') + '</th><th class="num">Acumulado</th></tr></thead><tbody>' + rows + '</tbody></table></div><p class="legal mt">Cada portafolio arrancó en una fecha distinta; el acumulado no es comparable de punta a punta.</p></div>' + legalFoot());
   }
 
@@ -339,7 +340,7 @@
     if (!top) renderHome();
     else if (top === 'p') renderDetail(parts[1], parts[2]);
     else if (top === 'comparar') renderComparar();
-    else if (top === 'aprender') renderAprender(parts[1]);
+    else if (top === 'aprender') renderHome(); // fichas educativas desactivadas por ahora
     else if (top === 'salir') { clearSession(); S.session = null; location.hash = '#/'; renderHeader(); renderLogin('Cerraste la sesión.'); }
     else renderHome();
   }

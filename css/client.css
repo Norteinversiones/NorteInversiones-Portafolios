@@ -20,11 +20,14 @@ body.client { padding-bottom: 76px; }
 .bottomnav a.on .ic::after { content: ""; position: absolute; left: 50%; bottom: -4px; width: 18px; height: 3px; margin-left: -9px; background: var(--amarillo); border-radius: 2px; }
 
 /* ---- tarjetas de portafolio (home) ---- */
-.pcard { display: block; text-decoration: none; color: inherit; background: var(--blanco); border-radius: var(--radio); padding: 16px; box-shadow: var(--sombra); margin-bottom: 12px; border-left: 6px solid var(--negro); }
-.pcard.r2 { border-left-color: var(--gris-2); } .pcard.r3 { border-left-color: var(--amarillo); }
+/* Color de identificación de cada portafolio: verde (conservador), amarillo (moderado), rojo (agresivo). */
+.pcard { --id: #1E8E3E; display: block; text-decoration: none; color: inherit; background: var(--blanco); border-radius: var(--radio); padding: 16px; box-shadow: var(--sombra); margin-bottom: 12px; border-left: 8px solid var(--id); }
+.pcard.r2 { --id: #FFD600; } .pcard.r3 { --id: #D93025; }
 .pcard .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .pcard h2 { margin: 0; font-size: 21px; }
-.pcard .risk { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--gris-2); font-weight: 600; }
+.pcard .risk { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--negro); font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--id); white-space: nowrap; }
+.pcard.r1 .risk, .pcard.r3 .risk { color: var(--blanco); }
+.pcard .more { color: var(--negro); }
 .pcard .desc { color: var(--gris-1); font-size: 13px; margin: 4px 0 10px; }
 .pcard .nums { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .pcard .n { background: var(--gris-4); border-radius: 10px; padding: 8px 10px; }
