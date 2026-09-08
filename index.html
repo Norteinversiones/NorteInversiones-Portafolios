@@ -2,18 +2,50 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Norte Inversiones · Portafolios sugeridos</title>
-<link rel="stylesheet" href="css/app.css?v=202609080032">
+<meta name="description" content="Portafolios sugeridos de Norte Inversiones con rendimiento en vivo.">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Norte">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=202609080046">
+<link rel="stylesheet" href="css/client.css?v=202609080046">
 </head>
-<body>
-<div class="topbar"><div class="inner"><a class="brand" href="./"><div class="logo">N</div><div><div class="name">Norte <b>Inversiones</b></div><div class="sub">Portafolios sugeridos</div></div></a></div></div>
-<div class="wrap">
-  <div class="card center">
-    <h1>Muy pronto</h1>
-    <p class="muted">La app para clientes está en construcción.</p>
-    <p><a class="btn sec" href="admin.html">Panel de administración</a></p>
+<body class="client">
+
+<div class="topbar">
+  <div class="inner">
+    <a class="brand" href="#/">
+      <div class="logo"><img src="assets/logo-square.png" alt="Norte Inversiones"></div>
+      <div><div class="name">Norte <b>Inversiones</b></div><div class="sub">Portafolios sugeridos</div></div>
+    </a>
+    <div class="user" id="hdrRight"></div>
   </div>
 </div>
+
+<div class="wrap narrow">
+  <nav class="bottomnav hidden" id="bottomnav">
+    <a href="#/" data-nav=""><span class="ic">◆</span>Inicio</a>
+    <a href="#/comparar" data-nav="comparar"><span class="ic">≡</span>Comparar</a>
+    <a href="#/aprender" data-nav="aprender"><span class="ic">?</span>Aprender</a>
+    <a href="#/salir" data-nav="salir"><span class="ic">⏻</span>Salir</a>
+  </nav>
+  <div id="view"><p class="center muted mt">Cargando…</p></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js?v=202609080046"></script>
+<script src="js/engine.js?v=202609080046"></script>
+<script src="js/db.js?v=202609080046"></script>
+<script src="js/charts.js?v=202609080046"></script>
+<script src="js/app.js?v=202609080046"></script>
 </body>
 </html>
