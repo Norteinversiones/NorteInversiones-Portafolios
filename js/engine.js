@@ -192,7 +192,9 @@
     opts = opts || {};
     var today = opts.today || todayART();
     var vs = (versions || [])
-      .filter(function (v) { return v && v.effectiveFrom && (v.status !== 'draft' || opts.includeDrafts); })
+      // Sólo versiones publicadas (o borradores si se piden). Las reemplazadas por una
+      // corrección (status "replaced") nunca cuentan.
+      .filter(function (v) { return v && v.effectiveFrom && (v.status === 'published' || !v.status || (v.status === 'draft' && opts.includeDrafts)); })
       .slice()
       .sort(function (a, b) { return a.effectiveFrom < b.effectiveFrom ? -1 : a.effectiveFrom > b.effectiveFrom ? 1 : 0; });
     if (!vs.length) return [];

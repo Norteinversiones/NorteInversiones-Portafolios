@@ -167,7 +167,7 @@
       html += renderEditor(S.draft, cur);
     } else {
       html += '<h2>' + h(p.name) + ' · nueva rotación</h2><div class="sub">Se crea un borrador. No cambia nada para los clientes hasta que publiques.</div><div class="row">';
-      if (cur) html += '<button class="btn" data-act="newdraft">Duplicar la versión vigente</button>';
+      if (cur) html += '<button class="btn" data-act="newdraft">Nueva rotación (duplicar la vigente)</button><button class="btn sec" data-act="fixdraft">Corregir la versión vigente</button>';
       if (N.SEED.versions[slug]) html += '<button class="btn sec" data-act="seeddraft">Cargar tenencias del documento (' + E.fmtDate(N.SEED.versions[slug].effectiveFrom) + ')</button>';
       html += '<button class="btn sec" data-act="emptydraft">Empezar en blanco</button></div>';
     }
@@ -203,8 +203,10 @@
   function renderEditor(d, cur) {
     var total = E.weightTotal(d.holdings), ok = Math.abs(total - 100) < 1e-6;
     var latest = S.book && S.book.latestDate ? (S.book.liveOk ? 'intradía ' + E.fmtDate(S.book.latestDate) : 'cierre ' + E.fmtDate(S.book.latestDate)) : 'sin precios';
-    var html = '<div class="row between"><h2>' + h(S.pmap[S.slug].name) + ' · borrador de rotación <span class="tag draft">borrador</span></h2>' +
+    var esFix = cur && d.effectiveFrom === cur.effectiveFrom;
+    var html = '<div class="row between"><h2>' + h(S.pmap[S.slug].name) + ' · ' + (esFix ? 'corrección de la versión vigente' : 'borrador de rotación') + ' <span class="tag draft">borrador</span></h2>' +
       '<button class="btn danger sm" data-act="discard">Descartar borrador</button></div>' +
+      (esFix ? '<div class="alert warn">Misma fecha que la versión vigente (' + E.fmtDate(cur.effectiveFrom) + '): al publicar, esta versión la <b>reemplaza</b> y se recalcula todo. Si en cambio es una rotación nueva, cambiá la fecha.</div>' : '') +
       '<div class="sub">Los precios de compra son los del día de la rotación. "Tomar precios actuales" usa la última cotización (' + latest + ').</div>' +
       '<div class="row">' +
       '<label class="f"><span>Fecha de rotación</span><input type="date" data-f="effectiveFrom" value="' + h(d.effectiveFrom || '') + '"></label>' +
@@ -253,6 +255,7 @@
       var act = b.dataset.act;
       try {
         if (act === 'newdraft') { S.draft = newDraftFrom(cur); refreshEditor(true); }
+        else if (act === 'fixdraft') { S.draft = newDraftFrom(cur, true); S.draft.isFix = true; refreshEditor(true); }
         else if (act === 'seeddraft') { S.draft = newDraftFrom(N.SEED.versions[slug], true); refreshEditor(true); }
         else if (act === 'emptydraft') { S.draft = { status: 'draft', effectiveFrom: E.todayART(), cclAtBuy: null, mepAtBuy: null, rationale: '', holdings: [] }; refreshEditor(true); }
         else if (act === 'discard') {
@@ -312,14 +315,17 @@
     var box = $('draftErrors');
     if (errs.length) { box.innerHTML = '<div class="alert bad"><b>No se puede publicar:</b><ul>' + errs.map(function (x) { return '<li>' + h(x) + '</li>'; }).join('') + '</ul></div>'; return; }
     box.innerHTML = '';
-    var msg = 'Publicar la rotación del ' + E.fmtDate(payload.effectiveFrom) + ' para ' + S.pmap[slug].name + ' con ' + payload.holdings.length + ' activos.' +
-      (cur ? '\nLa versión vigente (' + E.fmtDate(cur.effectiveFrom) + ') queda cerrada en esa fecha.' : '') + '\n\nUna versión publicada no se edita. ¿Confirmás?';
+    var esFix = cur && payload.effectiveFrom === cur.effectiveFrom;
+    var msg = esFix
+      ? 'Reemplazar la versión vigente del ' + E.fmtDate(cur.effectiveFrom) + ' de ' + S.pmap[slug].name + ' por esta corrección (' + payload.holdings.length + ' activos) y recalcular todo. ¿Confirmás?'
+      : 'Publicar la rotación del ' + E.fmtDate(payload.effectiveFrom) + ' para ' + S.pmap[slug].name + ' con ' + payload.holdings.length + ' activos.' +
+        (cur ? '\nLa versión vigente (' + E.fmtDate(cur.effectiveFrom) + ') queda cerrada en esa fecha.' : '') + '\n\nUna versión publicada sólo se cambia con "Corregir la versión vigente". ¿Confirmás?';
     if (!confirm(msg)) return;
     busy(true);
     try {
       var id = await saveDraft(slug);
       await db.publishVersion(slug, Object.assign({ id: id }, payload), S.user.email);
-      await N.recompute(slug, { force: false });
+      await N.recompute(slug, { force: !!esFix });
       S.draft = null; await reloadPortfolio(slug);
       busy(false); renderRotacion(); toast('Rotación publicada');
     } catch (e) { busy(false); throw e; }

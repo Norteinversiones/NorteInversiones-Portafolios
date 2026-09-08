@@ -102,7 +102,11 @@
       var published = docs(await col.where('status', '==', 'published').get()).sort(byField('effectiveFrom'));
       var b = db.batch();
       published.forEach(function (v) {
-        if (v.effectiveFrom < draft.effectiveFrom && (!v.effectiveTo || v.effectiveTo > draft.effectiveFrom)) {
+        if (v.id === draft.id) return;
+        if (v.effectiveFrom === draft.effectiveFrom) {
+          // Corrección: la versión con la misma fecha queda reemplazada (invisible para clientes y motor).
+          b.set(col.doc(v.id), { status: 'replaced', replacedBy: draft.id, replacedAt: ts(), updatedAt: ts() }, { merge: true });
+        } else if (v.effectiveFrom < draft.effectiveFrom && (!v.effectiveTo || v.effectiveTo > draft.effectiveFrom)) {
           b.set(col.doc(v.id), { effectiveTo: draft.effectiveFrom, updatedAt: ts() }, { merge: true });
         }
       });

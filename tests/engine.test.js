@@ -243,6 +243,12 @@
     eq(E.computePortfolio([v1, draft], book, { today: '2026-10-05', includeDrafts: true }).segments.filter(function (s) { return s.month === '2026-09'; }).length, 2);
   });
 
+  test('Una versión reemplazada por una corrección no cuenta nunca', function () {
+    var replaced = Object.assign({}, v2, { id: 'r', status: 'replaced' });
+    var book = E.quoteBook([qAug31, qSep15, qSep30]);
+    eq(E.computePortfolio([v1, replaced], book, { today: '2026-10-05', includeDrafts: true }).segments.filter(function (s) { return s.month === '2026-09'; }).length, 1);
+  });
+
   // ---------- 13. tenencias en vivo ----------
   test('Tenencias en vivo: variación desde el precio de compra en ARS y USD', function () {
     var live = { date: '2026-09-20', isEod: false, prices: { A: 130 }, fx: { ccl: 1300 } };
