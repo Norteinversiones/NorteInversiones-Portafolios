@@ -40,7 +40,8 @@
     init: function () {
       if (!firebase.apps.length) firebase.initializeApp(N.firebaseConfig);
       db = firebase.firestore();
-      return firebase.auth();
+      // La app cliente no carga el SDK de Auth (no lo necesita).
+      return typeof firebase.auth === 'function' ? firebase.auth() : null;
     },
     accountId: accountId,
 
