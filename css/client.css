@@ -101,9 +101,12 @@ body.simulando .wrap.narrow { background: repeating-linear-gradient(135deg, tran
 .modal .close { position: absolute; right: 14px; top: 10px; }
 @media (min-width: 640px) { .modal { align-items: center; } .modal .box { border-radius: 16px; } }
 
-/* ---- footer legal ---- */
+/* ---- footer legal + redes ---- */
 .foot { font-size: 11px; color: var(--gris-2); line-height: 1.45; padding: 12px 4px 0; }
 .foot p { margin-bottom: 6px; }
+.social { display: flex; gap: 8px; margin: 10px 0 4px; }
+.social a { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; background: var(--negro); color: var(--blanco); text-decoration: none; font-size: 12px; font-weight: 600; }
+.social a:hover { background: var(--amarillo); color: var(--negro); }
 
 /* ---- login ---- */
 .logo-login { width: 180px; max-width: 70%; display: block; margin: 0 auto 6px; }
