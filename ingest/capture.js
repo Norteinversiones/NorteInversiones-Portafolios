@@ -230,6 +230,65 @@ async function correrLive(db) {
   return { date: fecha, n: Object.keys(res.prices).length, missing: res.missing, feedErrors: errores };
 }
 
+// ---------- recálculo de rendimientos (mismo motor que el Panel) ----------
+// Después de cada corrida: meses cerrados (una vez, inmutables) + mes en curso + resumen.
+const engine = require('../js/engine.js');
+
+async function recalcularPortafolios(db) {
+  const ports = await db.collection('portfolios').get();
+  for (const pd of ports.docs) {
+    const slug = pd.id;
+    try {
+      const vsnap = await pd.ref.collection('versions').where('status', '==', 'published').get();
+      const versions = vsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+        .sort(function (a, b) { return a.effectiveFrom < b.effectiveFrom ? -1 : 1; });
+      const msnap = await pd.ref.collection('monthly_returns').get();
+      const existing = msnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+      const legacy = existing.filter(function (m) { return m.isLegacy; });
+
+      let computed = { months: [] }, book = null;
+      if (versions.length) {
+        const from = engine.addDays(engine.monthStart(engine.monthOf(versions[0].effectiveFrom)), -10);
+        const qsnap = await db.collection('quotes').where('date', '>=', from).orderBy('date').get();
+        const quotes = qsnap.docs.filter(function (d) { return d.id !== 'live'; }).map(function (d) { return d.data(); });
+        const liveDoc = await db.collection('quotes').doc('live').get();
+        book = engine.quoteBook(quotes, liveDoc.exists ? liveDoc.data() : null);
+        computed = engine.computePortfolio(versions, book, {});
+      }
+
+      const batch = db.batch();
+      let n = 0;
+      const merged = computed.months.map(function (m) {
+        const ex = existing.find(function (x) { return x.ym === m.ym; });
+        if (ex && ex.isClosed && !ex.isLegacy) return ex;       // mes cerrado: inmutable
+        batch.set(pd.ref.collection('monthly_returns').doc(m.ym), {
+          ym: m.ym, ars: m.ars, usd: m.usd, isLegacy: false, isClosed: !!m.isClosed, segments: m.segments,
+          basisDate: m.basisDate || null, basisIsPartial: !!m.basisIsPartial, endDate: m.endDate || null,
+          isLive: !!m.isLive, missing: m.missing || [], computedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        n++;
+        return m;
+      });
+      const history = engine.buildHistory(legacy, merged);
+      const cur = history.current;
+      batch.set(pd.ref, {
+        stats: {
+          accArs: history.accumulated.ars, accUsd: history.accumulated.usd, yearTotals: history.yearTotals,
+          current: cur ? { ym: cur.ym, ars: cur.ars, usd: cur.usd, basisDate: cur.basisDate || null, basisIsPartial: !!cur.basisIsPartial,
+                           endDate: cur.endDate || null, isLive: !!cur.isLive, missing: cur.missing || [] } : null,
+          firstAppMonth: history.firstAppMonth, monthsCount: history.months.length,
+          latestDate: book ? book.latestDate : null, isLive: !!(book && book.liveOk), computedAt: new Date().toISOString()
+        },
+        statsAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      await batch.commit();
+      log('recalculado', slug + ':', n, 'meses escritos ·', versions.length, 'versiones · acum ARS', history.accumulated.ars.toFixed(2) + '%');
+    } catch (e) {
+      log('ERROR recalculando', slug + ':', e.message);
+    }
+  }
+}
+
 // ---------- main ----------
 (async function main() {
   const sa = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -248,6 +307,7 @@ async function correrLive(db) {
     error = e.message || String(e);
     log('ERROR:', error);
   }
+  if (!error && resultado && !resultado.skipped) await recalcularPortafolios(db);
   const registro = {
     at: admin.firestore.FieldValue.serverTimestamp(), ok: !error, error: error,
     ms: Date.now() - t0, result: resultado

@@ -3,7 +3,7 @@ name: Pruebas
 
 on:
   push:
-    paths: ['js/engine.js', 'tests/**', '.github/workflows/pruebas.yml']
+    paths: ['js/**', 'ingest/**', 'tests/**', '.github/workflows/pruebas.yml']
   workflow_dispatch:
 
 jobs:
@@ -15,5 +15,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Sintaxis de todos los scripts
+        run: for f in js/*.js ingest/*.js tests/*.js; do node --check "$f" || exit 1; done
       - name: Pruebas del motor
         run: node tests/engine.test.js
