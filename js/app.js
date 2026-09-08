@@ -185,10 +185,11 @@
       var ins = S.insMap[x.ticker] || {};
       var buy = S.moneda === 'USD' ? E.fmtUsd(x.buyUsd) : E.fmtArs(x.buyArs), now = S.moneda === 'USD' ? E.fmtUsd(x.nowUsd) : E.fmtArs(x.nowArs);
       var v = S.moneda === 'USD' ? x.varUsd : x.varArs;
-      return '<div class="holding"><div><div class="tk">' + h(x.ticker) + (ins.type ? '<span class="tipo" data-ficha="' + h(ins.educationSlug || ins.type.toLowerCase().replace('_', '-')) + '">' + h(tipo(ins.type)) + '</span>' : '') + '</div><div class="nm">' + h(ins.name || '') + '</div></div>' +
-        '<div class="w">' + E.fmtNum(x.weightPct, 0) + '%</div>' +
-        '<div class="px">Compra ' + buy + ' · Ahora ' + now + '</div>' +
-        '<div class="var ' + pc(v) + '">' + E.fmtPct(v) + (x.stale ? ' <span class="stale">al ' + E.fmtDate(x.asOf) + '</span>' : '') + '</div></div>';
+      return '<div class="holding"><div class="hl"><div class="tk">' + h(x.ticker) + (ins.type ? '<span class="tipo" data-ficha="' + h(ins.educationSlug || ins.type.toLowerCase().replace('_', '-')) + '">' + h(tipo(ins.type)) + '</span>' : '') + '</div><div class="nm">' + h(ins.name || '') + '</div>' +
+        '<div class="px"><span class="l">Precio de compra</span><b>' + buy + '</b></div>' +
+        '<div class="px"><span class="l">Precio actual</span><b>' + now + '</b>' + (x.stale ? ' <span class="stale">al ' + E.fmtDate(x.asOf) + '</span>' : '') + '</div></div>' +
+        '<div class="hc"><div class="l">Tenencia</div><div class="v">' + E.fmtNum(x.weightPct, 0) + '%</div></div>' +
+        '<div class="hc"><div class="l">Resultado</div><div class="v ' + pc(v) + '">' + E.fmtPct(v) + '</div></div></div>';
     }).join('');
     var comp = E.compositionByType(cur.holdings, S.insMap).map(function (c) { return { label: tipo(c.type), value: c.weightPct }; });
     return '<div class="card"><h3>Composición</h3>' + C.donut({ slices: comp }) + '</div>' +

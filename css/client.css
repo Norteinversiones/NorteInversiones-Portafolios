@@ -48,14 +48,17 @@ body.client { padding-bottom: 76px; }
 .subtabs a { flex: 1; text-align: center; padding: 8px 6px; border-radius: 9px; text-decoration: none; color: var(--negro); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .subtabs a.on { background: var(--negro); color: var(--blanco); }
 
-.holding { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 10px 0; border-bottom: 1px solid var(--gris-4); }
+.holding { display: grid; grid-template-columns: 1fr auto auto; gap: 0 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--gris-4); }
 .holding:last-child { border-bottom: 0; }
 .holding .tk { font-weight: 700; font-size: 15px; }
 .holding .tk .tipo { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--gris-4); color: var(--negro); cursor: pointer; text-transform: uppercase; letter-spacing: .03em; }
-.holding .nm { font-size: 12px; color: var(--gris-2); }
-.holding .w { font-size: 20px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
-.holding .px { grid-column: 1; font-size: 12px; color: var(--gris-1); font-variant-numeric: tabular-nums; }
-.holding .var { grid-column: 2; text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.holding .nm { font-size: 12px; color: var(--gris-2); margin-bottom: 4px; }
+.holding .px { font-size: 12px; color: var(--gris-1); font-variant-numeric: tabular-nums; line-height: 1.4; }
+.holding .px .l { display: inline-block; min-width: 108px; color: var(--gris-2); }
+.holding .px b { font-weight: 600; color: var(--negro); }
+.holding .hc { text-align: right; min-width: 64px; }
+.holding .hc .l { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--gris-2); font-weight: 600; }
+.holding .hc .v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .holding .stale { color: var(--gris-2); font-weight: 400; font-size: 11px; }
 .legend { list-style: none; margin: 0; padding: 0; font-size: 13px; }
 .legend li { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
