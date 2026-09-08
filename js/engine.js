@@ -260,6 +260,9 @@
           endDate = ed.date;
         }
         if (!endDate || endDate < basisDate) return;
+        // Un segmento que arranca en un cierre y termina en ese mismo cierre no mide nada
+        // (típico: mes en curso sin cotizaciones todavía). El de rotación sí vale el mismo día.
+        if (startBasis !== 'buy' && endDate <= basisDate) return;
 
         var r = segmentReturn(holdings, startPx, endPx);
         segs.push({
