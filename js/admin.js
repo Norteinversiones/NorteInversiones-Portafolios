@@ -165,7 +165,7 @@
     if (S.draft) {
       html += renderEditor(S.draft, cur);
     } else {
-      html += '<h2>Nueva rotación</h2><div class="sub">Se crea un borrador. No cambia nada para los clientes hasta que publiques.</div><div class="row">';
+      html += '<h2>' + h(p.name) + ' · nueva rotación</h2><div class="sub">Se crea un borrador. No cambia nada para los clientes hasta que publiques.</div><div class="row">';
       if (cur) html += '<button class="btn" data-act="newdraft">Duplicar la versión vigente</button>';
       if (N.SEED.versions[slug]) html += '<button class="btn sec" data-act="seeddraft">Cargar tenencias del documento (' + E.fmtDate(N.SEED.versions[slug].effectiveFrom) + ')</button>';
       html += '<button class="btn sec" data-act="emptydraft">Empezar en blanco</button></div>';
@@ -202,7 +202,7 @@
   function renderEditor(d, cur) {
     var total = E.weightTotal(d.holdings), ok = Math.abs(total - 100) < 1e-6;
     var latest = S.book && S.book.latestDate ? (S.book.liveOk ? 'intradía ' + E.fmtDate(S.book.latestDate) : 'cierre ' + E.fmtDate(S.book.latestDate)) : 'sin precios';
-    var html = '<div class="row between"><h2>Borrador de rotación <span class="tag draft">borrador</span></h2>' +
+    var html = '<div class="row between"><h2>' + h(S.pmap[S.slug].name) + ' · borrador de rotación <span class="tag draft">borrador</span></h2>' +
       '<button class="btn danger sm" data-act="discard">Descartar borrador</button></div>' +
       '<div class="sub">Los precios de compra son los del día de la rotación. "Tomar precios actuales" usa la última cotización (' + latest + ').</div>' +
       '<div class="row">' +
@@ -252,7 +252,7 @@
       var act = b.dataset.act;
       try {
         if (act === 'newdraft') { S.draft = newDraftFrom(cur); refreshEditor(true); }
-        else if (act === 'seeddraft') { S.draft = newDraftFrom(N.SEED.versions[slug]); refreshEditor(true); }
+        else if (act === 'seeddraft') { S.draft = newDraftFrom(N.SEED.versions[slug], true); refreshEditor(true); }
         else if (act === 'emptydraft') { S.draft = { status: 'draft', effectiveFrom: E.todayART(), cclAtBuy: null, mepAtBuy: null, rationale: '', holdings: [] }; refreshEditor(true); }
         else if (act === 'discard') {
           if (!confirm('¿Descartar el borrador?')) return;
@@ -279,8 +279,10 @@
       } catch (err) { busy(false); console.error(err); toast('Error: ' + (err.message || err), true); }
     });
   }
-  function newDraftFrom(v) {
-    return { status: 'draft', effectiveFrom: E.todayART(), cclAtBuy: null, mepAtBuy: null, rationale: '',
+  // keepMeta=true conserva fecha, CCL/MEP y rationale del origen (tenencias del documento).
+  function newDraftFrom(v, keepMeta) {
+    return { status: 'draft', effectiveFrom: keepMeta ? v.effectiveFrom : E.todayART(),
+      cclAtBuy: keepMeta ? v.cclAtBuy : null, mepAtBuy: keepMeta ? v.mepAtBuy : null, rationale: keepMeta ? (v.rationale || '') : '',
       holdings: (v.holdings || []).map(function (hd) { return { ticker: hd.ticker, weightPct: hd.weightPct, buyPriceArs: hd.buyPriceArs, beta: hd.beta, note: hd.note || '' }; }) };
   }
   function refreshEditor(scroll) {
