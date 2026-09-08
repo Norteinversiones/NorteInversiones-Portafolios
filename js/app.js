@@ -42,7 +42,7 @@
   function legalFoot() {
     return '<div class="foot"><p>Los portafolios son sugeridos y no constituyen una recomendación personalizada de inversión. Los rendimientos pasados no garantizan rendimientos futuros.</p>' +
       '<p>Las cotizaciones pueden no coincidir exactamente con las del mercado por un leve delay. Última actualización: ' + h(lastUpdate()) + '.</p>' +
-      '<p>Norte Inversiones · Agente Asesor Global de Inversión registrado en CNV.</p>' +
+      '<p>Norte Inversiones · Agente Productor · Matrícula N.° 2060 (CNV).</p>' +
       '<div class="social"><a href="https://x.com/NorteInversion" target="_blank" rel="noopener" aria-label="Norte Inversiones en X">' +
       '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M18.9 2H22l-7.4 8.5L23 22h-6.8l-5.3-6.9L4.8 22H1.6l7.9-9.1L1 2h7l4.8 6.3L18.9 2zm-1.2 18h1.9L7.4 3.9H5.4L17.7 20z"/></svg>X</a>' +
       '<a href="https://www.instagram.com/norteinversiones/" target="_blank" rel="noopener" aria-label="Norte Inversiones en Instagram">' +
