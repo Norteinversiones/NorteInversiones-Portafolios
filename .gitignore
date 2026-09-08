@@ -1,0 +1,14 @@
+# Documentación interna (no se publica en el repositorio)
+CONTEXTO-APP-PORTAFOLIOS-v2.md
+PROMPT-CLAUDE-CODE.md
+files.zip
+docs-privados/
+
+# Credenciales: NUNCA al repo
+*.serviceaccount.json
+service-account*.json
+.env
+
+node_modules/
+.DS_Store
+Thumbs.db

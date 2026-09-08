@@ -1,0 +1,37 @@
+[
+  {"ticker":"BRKB","name":"Berkshire Hathaway B","type":"CEDEAR","underlying":"BRK.B","cedearRatio":null,"priceSymbol":"BRKB","usdBasis":"underlying"},
+  {"ticker":"WMT","name":"Walmart","type":"CEDEAR","underlying":"WMT","cedearRatio":null,"priceSymbol":"WMT","usdBasis":"underlying"},
+  {"ticker":"MSFT","name":"Microsoft","type":"CEDEAR","underlying":"MSFT","cedearRatio":30,"priceSymbol":"MSFT","usdBasis":"underlying"},
+  {"ticker":"MELI","name":"Mercado Libre","type":"CEDEAR","underlying":"MELI","cedearRatio":120,"priceSymbol":"MELI","usdBasis":"underlying"},
+  {"ticker":"AMD","name":"Advanced Micro Devices","type":"CEDEAR","underlying":"AMD","cedearRatio":10,"priceSymbol":"AMD","usdBasis":"underlying"},
+  {"ticker":"EWZ","name":"iShares MSCI Brazil (ETF)","type":"ETF","underlying":"EWZ","cedearRatio":null,"priceSymbol":"EWZ","usdBasis":"underlying"},
+  {"ticker":"NU","name":"Nu Holdings","type":"CEDEAR","underlying":"NU","cedearRatio":null,"priceSymbol":"NU","usdBasis":"underlying"},
+  {"ticker":"NVDA","name":"NVIDIA","type":"CEDEAR","underlying":"NVDA","cedearRatio":24,"priceSymbol":"NVDA","usdBasis":"underlying"},
+  {"ticker":"GOOGL","name":"Alphabet (Google)","type":"CEDEAR","underlying":"GOOGL","cedearRatio":null,"priceSymbol":"GOOGL","usdBasis":"underlying"},
+  {"ticker":"VIST","name":"Vista Energy","type":"CEDEAR","underlying":"VIST","cedearRatio":null,"priceSymbol":"VIST","usdBasis":"underlying"},
+  {"ticker":"KO","name":"Coca-Cola","type":"CEDEAR","underlying":"KO","cedearRatio":null,"priceSymbol":"KO","usdBasis":"underlying"},
+  {"ticker":"MA","name":"Mastercard","type":"CEDEAR","underlying":"MA","cedearRatio":null,"priceSymbol":"MA","usdBasis":"underlying"},
+
+  {"ticker":"YPF","name":"YPF","type":"ACCION","underlying":null,"cedearRatio":null,"priceSymbol":"YPFD","usdBasis":"ccl_conversion"},
+  {"ticker":"PAMP","name":"Pampa Energía","type":"ACCION","underlying":null,"cedearRatio":null,"priceSymbol":"PAMP","usdBasis":"ccl_conversion"},
+  {"ticker":"LOMA","name":"Loma Negra","type":"ACCION","underlying":null,"cedearRatio":null,"priceSymbol":"LOMA","usdBasis":"ccl_conversion"},
+  {"ticker":"CEPU","name":"Central Puerto","type":"ACCION","underlying":null,"cedearRatio":null,"priceSymbol":"CEPU","usdBasis":"ccl_conversion"},
+  {"ticker":"GGAL","name":"Grupo Financiero Galicia","type":"ACCION","underlying":null,"cedearRatio":null,"priceSymbol":"GGAL","usdBasis":"ccl_conversion"},
+  {"ticker":"EDN","name":"Edenor","type":"ACCION","underlying":null,"cedearRatio":null,"priceSymbol":"EDN","usdBasis":"ccl_conversion"},
+
+  {"ticker":"AO28","name":"Bonar 2028","type":"BONO_SOBERANO","underlying":null,"cedearRatio":null,"priceSymbol":"AO28","usdBasis":"parity"},
+  {"ticker":"AL30","name":"Bonar 2030","type":"BONO_SOBERANO","underlying":null,"cedearRatio":null,"priceSymbol":"AL30","usdBasis":"parity"},
+  {"ticker":"AL35","name":"Bonar 2035","type":"BONO_SOBERANO","underlying":null,"cedearRatio":null,"priceSymbol":"AL35","usdBasis":"parity"},
+  {"ticker":"AE38","name":"Bonar 2038","type":"BONO_SOBERANO","underlying":null,"cedearRatio":null,"priceSymbol":"AE38","usdBasis":"parity"},
+  {"ticker":"GD41","name":"Global 2041","type":"BONO_SOBERANO","underlying":null,"cedearRatio":null,"priceSymbol":"GD41","usdBasis":"parity"},
+  {"ticker":"GD35","name":"Global 2035","type":"BONO_SOBERANO","underlying":null,"cedearRatio":null,"priceSymbol":"GD35","usdBasis":"parity"},
+  {"ticker":"AO27","name":"Bonar 2027","type":"BONO_SOBERANO","underlying":null,"cedearRatio":null,"priceSymbol":"AO27","usdBasis":"parity"},
+
+  {"ticker":"TZXM7","name":"Boncer marzo 2027","type":"BONO_CER","underlying":null,"cedearRatio":null,"priceSymbol":"TZXM7","usdBasis":"ccl_conversion"},
+  {"ticker":"TZX27","name":"Boncer junio 2027","type":"BONO_CER","underlying":null,"cedearRatio":null,"priceSymbol":"TZX27","usdBasis":"ccl_conversion"},
+
+  {"ticker":"YM34O","name":"ON YPF 2034","type":"ON","underlying":null,"cedearRatio":null,"priceSymbol":"YM34O","usdBasis":"parity"},
+
+  {"ticker":"S30O6","name":"Lecap 30/10/2026","type":"LECAP","underlying":null,"cedearRatio":null,"priceSymbol":"S30O6","usdBasis":"ccl_conversion"},
+  {"ticker":"T30A7","name":"Boncap 30/04/2027","type":"BONCAP","underlying":null,"cedearRatio":null,"priceSymbol":"T30A7","usdBasis":"ccl_conversion"}
+]

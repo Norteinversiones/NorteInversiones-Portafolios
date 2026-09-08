@@ -1,0 +1,47 @@
+# Captura de precios · corre en los servidores de GitHub, no en tu PC.
+# Horarios en UTC (Argentina = UTC-3, sin cambio de hora).
+name: Precios
+
+on:
+  schedule:
+    - cron: '*/10 14-20 * * 1-5'   # intradía: cada 10 min, 11:00-17:50 ART, lunes a viernes
+    - cron: '15 22 * * 1-5'        # cierre: 19:15 ART (data912 tiene ~2 h de delay)
+    - cron: '45 23 * * 1-5'        # cierre, segunda pasada: 20:45 ART (pisa la primera si cambió algo)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Modo'
+        type: choice
+        options: [eod, live]
+        default: eod
+      force:
+        description: 'Forzar (ignora fin de semana / detección de feriado)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: precios
+  cancel-in-progress: false
+
+jobs:
+  capturar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        working-directory: ingest
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Capturar precios
+        working-directory: ingest
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '*/10 14-20 * * 1-5' && 'live' || 'eod') }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true && '--force' || '' }}
+        run: node capture.js "$MODE" $FORCE

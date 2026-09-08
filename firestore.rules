@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// Reglas de seguridad · App de portafolios de Norte Inversiones.
+// Lectura: abierta para lo que ve el cliente (el acceso por comitente se
+// controla en la app). Escritura: sólo el mail admin con Google.
+// La ingesta de precios escribe con cuenta de servicio y NO pasa por acá.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+          && request.auth.token.email_verified == true
+          && request.auth.token.email in ["norteahorro@gmail.com"];
+    }
+
+    // Catálogo de instrumentos y precios (diarios + intradía).
+    match /instruments/{ticker}  { allow read: if true;      allow write: if isAdmin(); }
+    match /quotes/{fecha}        { allow read: if true;      allow write: if isAdmin(); }
+    match /quotes_all/{fecha}    { allow read: if isAdmin(); allow write: if isAdmin(); }
+    match /jobs/{job}            { allow read: if isAdmin(); allow write: if isAdmin(); }
+
+    // Portafolios, versiones (rotaciones) y rendimientos mensuales.
+    match /portfolios/{slug} {
+      allow read: if true;
+      allow write: if isAdmin();
+      match /versions/{versionId} {
+        // Los borradores sólo los ve el admin.
+        allow read: if resource.data.status == "published" || isAdmin();
+        allow write: if isAdmin();
+      }
+      match /monthly_returns/{ym} { allow read: if true; allow write: if isAdmin(); }
+    }
+
+    // Fichas educativas.
+    match /education/{slug} {
+      allow read: if resource.data.isPublished == true || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Comitentes autorizados. Sólo se puede consultar UN documento por su id
+    // (ALYC_COMITENTE); nunca listar la colección.
+    match /authorized_accounts/{id} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+  }
+}

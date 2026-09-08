@@ -1,0 +1,15 @@
+{
+  "name": "norte-portafolios-ingesta",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Captura diaria e intradía de precios BYMA (data912) y dólar (dolarapi) hacia Firestore",
+  "type": "commonjs",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "eod": "node capture.js eod",
+    "live": "node capture.js live"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.5.0"
+  }
+}
