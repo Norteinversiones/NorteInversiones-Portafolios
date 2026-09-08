@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pruebas del motor · Norte</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 24px auto; max-width: 860px; padding: 0 16px; color: #111; }
+  h1 { font-size: 20px; } h2 { font-size: 18px; } .good { color: #1a7f37; } .bad { color: #b3261e; }
+  .t { padding: 6px 10px; border-left: 4px solid #1a7f37; margin: 4px 0; background: #f4faf5; }
+  .t.fail { border-color: #b3261e; background: #fdf3f2; }
+  pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 13px; color: #7a1f18; }
+</style>
+</head>
+<body>
+<h1>Pruebas del motor de rendimientos</h1>
+<p>Corren en tu navegador. Ninguna pantalla de la app calcula rendimientos: todo pasa por <code>js/engine.js</code>.</p>
+<div id="out">Cargando…</div>
+<script src="../js/engine.js"></script>
+<script src="engine.test.js"></script>
+</body>
+</html>
