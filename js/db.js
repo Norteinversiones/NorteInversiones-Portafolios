@@ -60,10 +60,14 @@
     getPortfolios: async function () {
       return docs(await db.collection('portfolios').get()).map(function (p) { p.slug = p.id; return p; }).sort(byField('order'));
     },
+    // Siembra (o completa) los 3 portafolios. Borra campos de la app vieja si quedaron.
     seedPortfolios: async function () {
+      var del = firebase.firestore.FieldValue.delete();
       var b = db.batch();
       N.SEED.portfolios.forEach(function (p) {
-        b.set(db.collection('portfolios').doc(p.slug), Object.assign({}, p, { createdAt: ts() }), { merge: true });
+        b.set(db.collection('portfolios').doc(p.slug), Object.assign({}, p, {
+          createdAt: ts(), nombre: del, holdings: del, ejemplo: del
+        }), { merge: true });
       });
       await b.commit();
     },

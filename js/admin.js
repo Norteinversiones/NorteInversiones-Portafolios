@@ -74,7 +74,8 @@
     S.instruments = await db.getInstruments();
     S.insMap = {}; S.instruments.forEach(function (i) { S.insMap[i.ticker] = i; });
     S.portfolios = await db.getPortfolios();
-    if (!S.portfolios.length) { await db.seedPortfolios(); S.portfolios = await db.getPortfolios(); }
+    var incompleto = S.portfolios.length < N.SEED.portfolios.length || S.portfolios.some(function (p) { return !p.name; });
+    if (incompleto) { await db.seedPortfolios(); S.portfolios = await db.getPortfolios(); }
     S.pmap = {}; S.portfolios.forEach(function (p) { S.pmap[p.slug] = p; });
     await Promise.all(S.portfolios.map(async function (p) { S.versions[p.slug] = await db.getVersions(p.slug, true); }));
     await reloadQuotes();
