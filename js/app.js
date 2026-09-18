@@ -146,6 +146,7 @@
         '<div class="desc">' + h(p.description || '') + '</div>' +
         '<div class="nums"><div class="n"><div class="l">' + (cur ? E.fmtMonthLong(cur.ym) : 'Mes en curso') + '</div><div class="v ' + pc(mes) + '">' + E.fmtPct(mes) + '</div><div class="s">' + (cur && cur.basisIsPartial ? 'desde el ' + E.fmtDate(cur.basisDate) : cur && cur.isLive ? 'en vivo' : cur ? 'al ' + E.fmtDate(cur.endDate) : 'sin datos') + '</div></div>' +
         '<div class="n"><div class="l">Acumulado</div><div class="v ' + pc(acc) + '">' + E.fmtPct(acc) + '</div><div class="s">' + (p.inceptionDate ? 'desde ' + E.fmtMonth(p.inceptionDate.slice(0, 7)) : '') + (st.monthsCount ? ' · ' + st.monthsCount + ' meses' : '') + '</div></div></div>' +
+        sparkHtml(p, st) +
         '<span class="more">Ver portafolio ›</span></a>';
     }).join('');
     var install = S.installEvt ? '<div class="installtip"><b>Instalá la app en tu teléfono</b> para tenerla a mano. <button class="btn sm amarillo" id="btnInstall">Instalar</button></div>'
@@ -154,6 +155,15 @@
       '<div class="pcards">' + cards + '</div>' +
       '<p><a class="btn sec" href="#/comparar">Comparar los tres</a></p>' + install + legalFoot());
     var bi = $('btnInstall'); if (bi) bi.onclick = async function () { S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; renderHome(); };
+  }
+  // Sparkline de los últimos 30 días (calculada por el robot en stats.sparkline). Se oculta si no hay datos.
+  function sparkHtml(p, st) {
+    var sp = st && st.sparkline;
+    if (!sp || !sp.values || sp.values.length < 2) return '';
+    var vals = S.moneda === 'USD' && sp.valuesUsd ? sp.valuesUsd : sp.values;
+    var color = p.riskLevel === 1 ? '#1E8E3E' : p.riskLevel === 3 ? '#D93025' : '#E6C000';
+    var ult = vals[vals.length - 1];
+    return '<div class="spark-wrap"><div class="l">Últimos 30 días · <span class="' + pc(ult) + '">' + E.fmtPct(ult, 1) + '</span> desde el ' + E.fmtDate(sp.from) + '</div>' + C.sparkline(vals, color) + '</div>';
   }
   function isIos() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
   function isStandalone() { return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
@@ -363,6 +373,7 @@
   (async function init() {
     try { S.moneda = localStorage.getItem(MONEDA_KEY) === 'USD' ? 'USD' : 'ARS'; } catch (e) { }
     db.init();
+    if (N.ticker) N.ticker.init();
     window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); S.installEvt = e; if (S.session && !location.hash.replace('#/', '')) renderHome(); });
     window.addEventListener('hashchange', route);
     S.session = loadSession();

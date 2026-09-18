@@ -212,6 +212,37 @@
     eq(E.minSimulationDate([v1], book), '2026-08-31', 'fecha mínima = inicio de la captura');
   });
 
+  // ---------- 9b. serie diaria (sparkline) ----------
+  test('Serie diaria: un punto por cierre, arranca en 0 y termina igual que el simulador', function () {
+    var qs = [];
+    for (var i = 1; i <= 20; i++) { var d = '2026-09-' + String(i).padStart(2, '0'); qs.push(q(d, { A: 100 + i, B: 200 - i }, 1000 + i)); }
+    var book = E.quoteBook(qs);
+    var s = E.dailySeries([v1], book, { days: 10, today: '2026-09-20' });
+    eq(s.from, '2026-09-10'); eq(s.to, '2026-09-20');
+    eq(s.dates.length, 11); eq(s.values.length, 11); eq(s.valuesUsd.length, 11);
+    near(s.values[0], 0); near(s.valuesUsd[0], 0);
+    var sim = E.simulate([v1], book, '2026-09-10', { today: '2026-09-20' });
+    near(s.values[10], sim.accumulated.ars, 'último punto = simulador desde el inicio de la ventana');
+    near(s.values[1], (0.6 * (111 / 110 - 1) + 0.4 * (189 / 190 - 1)) * 100, 'segundo punto (11/09 vs 10/09)');
+  });
+
+  test('Serie diaria: con menos historia que la ventana devuelve lo que hay; sin datos devuelve null', function () {
+    var book = E.quoteBook([q('2026-09-18', { A: 100, B: 200 }, 1000), q('2026-09-19', { A: 102, B: 200 }, 1000), q('2026-09-20', { A: 104, B: 202 }, 1000)]);
+    var s = E.dailySeries([v1], book, { days: 30, today: '2026-09-20' });
+    eq(s.dates.join(','), '2026-09-18,2026-09-19,2026-09-20');
+    near(s.values[2], (0.6 * 0.04 + 0.4 * 0.01) * 100);
+    eq(E.dailySeries([v1], E.quoteBook([q('2026-09-20', { A: 100, B: 200 }, 1000)]), { days: 30, today: '2026-09-20' }), null, 'un solo cierre');
+    eq(E.dailySeries([], book, { days: 30, today: '2026-09-20' }), null, 'sin versiones');
+  });
+
+  test('Serie diaria: si la ventana arranca en una rotación, la base son los precios de compra', function () {
+    var vR = { id: 'r', effectiveFrom: '2026-09-15', cclAtBuy: 1000, status: 'published', holdings: [H('A', 100, 100)] };
+    var book = E.quoteBook([q('2026-09-10', { A: 90 }, 1000), q('2026-09-15', { A: 101 }, 1000), q('2026-09-16', { A: 110 }, 1000)]);
+    var s = E.dailySeries([vR], book, { days: 30, today: '2026-09-16' });
+    eq(s.from, '2026-09-15'); eq(s.dates.length, 3);
+    near(s.values[1], 1, '15/09: cierre 101 vs compra 100'); near(s.values[2], 10);
+  });
+
   // ---------- 10. sin historia previa al mes ----------
   test('Sin cierres antes del mes: la base es el primer cierre disponible y se informa', function () {
     var v = { id: 'x', effectiveFrom: '2026-08-10', cclAtBuy: 1000, status: 'published', holdings: [H('A', 60, 100), H('B', 40, 200)] };

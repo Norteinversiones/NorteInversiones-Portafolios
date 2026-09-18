@@ -103,5 +103,26 @@
     return '<div class="donutwrap">' + out + legend + '</div>';
   }
 
-  N.charts = { bars: bars, lines: lines, donut: donut, COLORS: { pos: POS, neg: NEG, negro: NEGRO, amarillo: AMARILLO, gris: GRIS } };
+  // ---- Sparkline: mini línea sin ejes. values [] (% acumulado), color de identificación ----
+  function sparkline(values, color, opts) {
+    opts = opts || {};
+    var vals = (values || []).filter(function (v) { return v != null && !isNaN(v); });
+    if (vals.length < 2) return '';
+    var W = opts.width || 160, H = opts.height || 40, pad = 3;
+    var max = Math.max.apply(null, vals), min = Math.min.apply(null, vals);
+    if (max === min) { max += 0.5; min -= 0.5; }
+    var n = vals.length;
+    var x = function (i) { return pad + i / (n - 1) * (W - 2 * pad); };
+    var y = function (v) { return pad + (max - v) / (max - min) * (H - 2 * pad); };
+    var d = vals.map(function (v, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); }).join(' ');
+    var area = d + ' L' + x(n - 1).toFixed(1) + ' ' + (H - pad) + ' L' + x(0).toFixed(1) + ' ' + (H - pad) + ' Z';
+    var out = '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" preserveAspectRatio="none" role="img" aria-label="Evolución de los últimos 30 días">';
+    if (min < 0 && max > 0) out += '<line x1="' + pad + '" x2="' + (W - pad) + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '" stroke="' + GRIS_C + '" stroke-width="1" stroke-dasharray="3 3"/>';
+    out += '<path d="' + area + '" fill="' + (color || NEGRO) + '" opacity="0.10"/>';
+    out += '<path d="' + d + '" fill="none" stroke="' + (color || NEGRO) + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+    out += '<circle cx="' + x(n - 1).toFixed(1) + '" cy="' + y(vals[n - 1]).toFixed(1) + '" r="2.6" fill="' + (color || NEGRO) + '"/>';
+    return out + '</svg>';
+  }
+
+  N.charts = { bars: bars, lines: lines, donut: donut, sparkline: sparkline, COLORS: { pos: POS, neg: NEG, negro: NEGRO, amarillo: AMARILLO, gris: GRIS } };
 })();

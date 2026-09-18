@@ -370,6 +370,47 @@
     };
   }
 
+  // ------------------------------------------------------------
+  // Serie diaria (sparkline): acumulado día a día de los últimos `days` días.
+  // Es el simulador evaluado en cada cierre de la ventana: para cada fecha d se
+  // encadenan los segmentos desde el inicio de la ventana hasta d (misma lógica
+  // que simulate). values arranca en 0 (base = cierre inicial o precios de compra
+  // si la ventana empieza en una rotación). Devuelve null si no hay 2 puntos.
+  //   → { from, to, dates: [], values: [] (ARS %), valuesUsd: [] (USD %) }
+  // ------------------------------------------------------------
+  function dailySeries(versions, book, opts) {
+    opts = opts || {};
+    var days = opts.days || 30, today = opts.today || todayART();
+    var vs = (versions || []).filter(function (v) { return v && v.effectiveFrom && (v.status === 'published' || !v.status); })
+      .sort(function (a, b) { return a.effectiveFrom < b.effectiveFrom ? -1 : 1; });
+    if (!vs.length || !book || !book.latestDate) return null;
+    var end = book.latestDate < today ? book.latestDate : today;
+    var start = addDays(end, -days);
+    if (vs[0].effectiveFrom > start) start = vs[0].effectiveFrom;
+    if (start > end) return null;
+    // fecha base: si la ventana no arranca en una rotación, el cierre disponible en/antes de start
+    var esRotacion = vs.some(function (v) { return v.effectiveFrom === start; });
+    if (!esRotacion) {
+      var base = book.dayAtOrBefore(start) || book.dayAtOrAfter(start);
+      if (!base || base.date > end) return null;
+      start = base.date;
+    }
+    // Si la ventana arranca en una rotación, el cierre de ese mismo día ya es un punto
+    // (compra intradía → cierre); si no, el cierre de `start` es la base (0).
+    var dates = book.eod.filter(function (q) { return (q.date > start || (esRotacion && q.date === start)) && q.date <= end; }).map(function (q) { return q.date; });
+    if (book.liveOk && book.live.date > start && dates.indexOf(book.live.date) < 0) dates.push(book.live.date);
+    var outDates = [start], values = [0], valuesUsd = [0];
+    dates.forEach(function (d) {
+      var segs = computeSegments(vs, book, { from: start, to: d, today: d });
+      if (!segs.length) return;
+      outDates.push(d);
+      values.push(chain(segs.map(function (s) { return s.returnArs; })));
+      valuesUsd.push(chain(segs.map(function (s) { return s.returnUsd; })));
+    });
+    if (outDates.length < 2) return null;
+    return { from: start, to: outDates[outDates.length - 1], dates: outDates, values: values, valuesUsd: valuesUsd };
+  }
+
   // Fecha mínima seleccionable en el simulador: la más tardía entre el inicio de la
   // captura de precios y la primera versión cargada en la app.
   function minSimulationDate(versions, book) {
@@ -488,7 +529,7 @@
     // núcleo
     quoteBook: quoteBook, computeSegments: computeSegments, monthlyFromSegments: monthlyFromSegments,
     computePortfolio: computePortfolio, buildHistory: buildHistory, chain: chain,
-    simulate: simulate, minSimulationDate: minSimulationDate, holdingsLive: holdingsLive,
+    simulate: simulate, dailySeries: dailySeries, minSimulationDate: minSimulationDate, holdingsLive: holdingsLive,
     // composición
     betaPortfolio: betaPortfolio, weightTotal: weightTotal, compositionByType: compositionByType,
     validateVersion: validateVersion,

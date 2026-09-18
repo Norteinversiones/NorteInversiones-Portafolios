@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const admin = require('firebase-admin');
 
-const MODE = process.argv[2] === 'live' ? 'live' : 'eod';
+const MODE = process.argv[2] === 'live' ? 'live' : process.argv[2] === 'market' ? 'market' : 'eod';
 const FORCE = process.argv.includes('--force');
 
 const D912 = 'https://data912.com/live/';
@@ -230,6 +230,93 @@ async function correrLive(db) {
   return { date: fecha, n: Object.keys(res.prices).length, missing: res.missing, feedErrors: errores };
 }
 
+// ---------- cinta de cotizaciones (modo market) ----------
+// Índices/commodities: Yahoo Finance (endpoint público de gráficos, sin key; query1 con respaldo en query2).
+// Dólar MEP: dolarapi. Riesgo país: argentinadatos. Escribe market/ticker (sólo el último valor).
+// Si una fuente falla, el ítem conserva el valor anterior con stale:true; nunca se rompe la cinta.
+const TICKER_DEFS = [
+  { key: 'spx', label: 'S&P 500', yahoo: '^GSPC', unit: 'pts', decimals: 2 },
+  { key: 'ndq', label: 'Nasdaq', yahoo: '^IXIC', unit: 'pts', decimals: 2 },
+  { key: 'merval', label: 'Merval', yahoo: '^MERV', unit: 'pts', decimals: 0 },
+  { key: 'oro', label: 'Oro', yahoo: 'GC=F', unit: 'US$/oz', decimals: 2 },
+  { key: 'wti', label: 'Petróleo WTI', yahoo: 'CL=F', unit: 'US$/bbl', decimals: 2 },
+  { key: 'mep', label: 'Dólar MEP', unit: '$', decimals: 0 },
+  { key: 'riesgo', label: 'Riesgo país', unit: 'pb', decimals: 0 }
+];
+const YAHOO_UA = { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) norte-portafolios/1.0' };
+
+async function yahooQuote(symbol) {
+  const path = '/v8/finance/chart/' + encodeURIComponent(symbol) + '?range=1d&interval=1d';
+  let lastErr;
+  for (const host of ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com']) {
+    try {
+      const r = await fetch(host + path, { headers: YAHOO_UA });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const meta = j && j.chart && j.chart.result && j.chart.result[0] && j.chart.result[0].meta;
+      if (!meta || !(meta.regularMarketPrice > 0)) throw new Error('sin precio en la respuesta');
+      const price = Number(meta.regularMarketPrice);
+      let pct = meta.regularMarketChangePercent != null ? Number(meta.regularMarketChangePercent) : null;
+      const prev = Number(meta.chartPreviousClose || meta.previousClose);
+      if ((pct == null || isNaN(pct)) && prev > 0) pct = (price / prev - 1) * 100;
+      return { value: price, changePct: pct != null && !isNaN(pct) ? pct : null, prevClose: prev > 0 ? prev : null,
+               asOf: meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : new Date().toISOString(), source: 'yahoo' };
+    } catch (e) { lastErr = e; log('yahoo', symbol, host, 'falló:', e.message); }
+  }
+  throw lastErr;
+}
+
+async function correrMarket(db) {
+  const ref = db.collection('market').doc('ticker');
+  const prevDoc = await ref.get();
+  const prevItems = {};
+  if (prevDoc.exists) (prevDoc.data().items || []).forEach(function (it) { prevItems[it.key] = it; });
+  const hoy = fechaART();
+  const errores = [];
+  const items = [];
+
+  // Dólar MEP: variación contra el último valor guardado de un día anterior.
+  let mep = null;
+  try { const fx = await traerFx(); mep = fx.mep; } catch (e) { errores.push('mep: ' + e.message); }
+  // Riesgo país: último valor y variación contra el día anterior (histórico de argentinadatos).
+  let riesgo = null;
+  try {
+    const hist = await getJson('https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais');
+    const serie = (Array.isArray(hist) ? hist : []).filter(function (x) { return x && x.valor > 0 && x.fecha; })
+      .sort(function (a, b) { return a.fecha < b.fecha ? -1 : 1; });
+    if (serie.length) {
+      const ult = serie[serie.length - 1], ant = serie.length > 1 ? serie[serie.length - 2] : null;
+      riesgo = { value: Number(ult.valor), changePct: ant ? (ult.valor / ant.valor - 1) * 100 : null, prevClose: ant ? Number(ant.valor) : null,
+                 asOf: ult.fecha + 'T00:00:00.000Z', source: 'argentinadatos' };
+    }
+  } catch (e) { errores.push('riesgo: ' + e.message); }
+
+  for (const def of TICKER_DEFS) {
+    const prev = prevItems[def.key] || null;
+    let datos = null;
+    try {
+      if (def.yahoo) datos = await yahooQuote(def.yahoo);
+      else if (def.key === 'mep' && mep > 0) {
+        // prevClose = último valor guardado de un día distinto (o el que ya teníamos como prevClose si es el mismo día)
+        let prevClose = null;
+        if (prev) prevClose = (prev.asOf || '').slice(0, 10) !== hoy ? prev.value : (prev.prevClose || null);
+        datos = { value: mep, changePct: prevClose > 0 ? (mep / prevClose - 1) * 100 : null, prevClose: prevClose, asOf: new Date().toISOString(), source: 'dolarapi' };
+      }
+      else if (def.key === 'riesgo' && riesgo) datos = riesgo;
+      else throw new Error('sin datos');
+    } catch (e) {
+      errores.push(def.key + ': ' + e.message);
+    }
+    if (datos) items.push(Object.assign({ key: def.key, label: def.label, unit: def.unit, decimals: def.decimals, stale: false }, datos));
+    else if (prev) items.push(Object.assign({}, prev, { stale: true }));
+    else items.push({ key: def.key, label: def.label, unit: def.unit, decimals: def.decimals, value: null, changePct: null, prevClose: null, asOf: null, source: null, stale: true });
+  }
+
+  await ref.set({ items: items, errors: errores, updatedAt: admin.firestore.FieldValue.serverTimestamp(), date: hoy });
+  log('cinta guardada:', items.map(function (i) { return i.key + '=' + (i.value == null ? '—' : i.value) + (i.stale ? '(viejo)' : ''); }).join(' '), errores.length ? '· errores: ' + errores.join(' | ') : '');
+  return { n: items.filter(function (i) { return !i.stale; }).length, errors: errores };
+}
+
 // ---------- recálculo de rendimientos (mismo motor que el Panel) ----------
 // Después de cada corrida: meses cerrados (una vez, inmutables) + mes en curso + resumen.
 const engine = require('../js/engine.js');
@@ -271,13 +358,17 @@ async function recalcularPortafolios(db) {
       });
       const history = engine.buildHistory(legacy, merged);
       const cur = history.current;
+      // Sparkline de la home: acumulado día a día de los últimos 30 días (mismo motor, calculado acá
+      // para no cargarle el cálculo al navegador del cliente). null si no hay 2 puntos.
+      const sparkline = book ? engine.dailySeries(versions, book, { days: 30 }) : null;
       batch.set(pd.ref, {
         stats: {
           accArs: history.accumulated.ars, accUsd: history.accumulated.usd, yearTotals: history.yearTotals,
           current: cur ? { ym: cur.ym, ars: cur.ars, usd: cur.usd, basisDate: cur.basisDate || null, basisIsPartial: !!cur.basisIsPartial,
                            endDate: cur.endDate || null, isLive: !!cur.isLive, missing: cur.missing || [] } : null,
           firstAppMonth: history.firstAppMonth, monthsCount: history.months.length,
-          latestDate: book ? book.latestDate : null, isLive: !!(book && book.liveOk), computedAt: new Date().toISOString()
+          latestDate: book ? book.latestDate : null, isLive: !!(book && book.liveOk), computedAt: new Date().toISOString(),
+          sparkline: sparkline
         },
         statsAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
@@ -302,12 +393,12 @@ async function recalcularPortafolios(db) {
   const t0 = Date.now();
   let resultado = null, error = null;
   try {
-    resultado = MODE === 'live' ? await correrLive(db) : await correrEod(db);
+    resultado = MODE === 'live' ? await correrLive(db) : MODE === 'market' ? await correrMarket(db) : await correrEod(db);
   } catch (e) {
     error = e.message || String(e);
     log('ERROR:', error);
   }
-  if (!error && resultado && !resultado.skipped) await recalcularPortafolios(db);
+  if (!error && MODE !== 'market' && resultado && !resultado.skipped) await recalcularPortafolios(db);
   const registro = {
     at: admin.firestore.FieldValue.serverTimestamp(), ok: !error, error: error,
     ms: Date.now() - t0, result: resultado

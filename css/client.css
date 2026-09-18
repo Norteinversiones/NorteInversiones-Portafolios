@@ -11,6 +11,27 @@ body.client { padding-bottom: 76px; }
 .moneda button { border: 0; background: transparent; color: var(--blanco); padding: 5px 11px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .moneda button.on { background: var(--amarillo); color: var(--negro); }
 
+/* ---- cinta de cotizaciones (ticker) ---- */
+.ticker { background: var(--negro); color: var(--blanco); border-top: 1px solid #2A2A2A; overflow: hidden; white-space: nowrap; font-size: 12.5px; line-height: 1; position: sticky; top: 61px; z-index: 19; }
+.tk-track { display: inline-flex; width: max-content; animation: tk-scroll 40s linear infinite; will-change: transform; }
+.tk-group { display: inline-flex; align-items: center; padding: 8px 0; }
+.ticker:hover .tk-track, .ticker.paused .tk-track { animation-play-state: paused; }
+.tk-item { display: inline-flex; align-items: baseline; gap: 6px; padding: 0 14px; }
+.tk-item .lbl { color: #BDBDBD; font-weight: 500; }
+.tk-item .val { color: var(--blanco); font-weight: 700; font-variant-numeric: tabular-nums; }
+.tk-item .var { font-weight: 600; font-variant-numeric: tabular-nums; color: #BDBDBD; }
+.tk-item .var.pos { color: #4BCB6E; } .tk-item .var.neg { color: #FF6B5E; }
+.tk-item.stale .val { opacity: .7; }
+.tk-sep { color: var(--amarillo); padding: 0 2px; }
+@keyframes tk-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .tk-track { animation: none; } .ticker { overflow-x: auto; } }
+@media (max-width: 640px) { .ticker { top: 60px; font-size: 12px; } }
+
+/* ---- sparkline en las tarjetas ---- */
+.pcard .spark-wrap { margin-top: 10px; }
+.pcard .spark-wrap .l { font-size: 11px; color: var(--gris-2); margin-bottom: 2px; }
+.pcard svg.spark { display: block; }
+
 /* ---- navegación inferior ---- */
 .bottomnav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--blanco); border-top: 1px solid var(--gris-3); display: flex; z-index: 30; padding-bottom: env(safe-area-inset-bottom); }
 .bottomnav a { flex: 1; text-align: center; padding: 8px 4px 6px; text-decoration: none; color: var(--gris-2); font-size: 11px; font-weight: 500; }

@@ -317,6 +317,12 @@
       await db.collection('education').doc(card.slug).set(clean(Object.assign({}, card, { updatedAt: ts() })), { merge: true });
     },
 
+    // ---------- cinta de cotizaciones ----------
+    getMarketTicker: async function () {
+      var d = await db.collection('market').doc('ticker').get();
+      return d.exists ? d.data() : null;
+    },
+
     // ---------- salud ----------
     getJobHealth: async function () {
       var d = await db.collection('jobs').doc('ingesta').get();

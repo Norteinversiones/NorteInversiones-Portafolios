@@ -7,12 +7,14 @@ on:
     - cron: '*/10 14-20 * * 1-5'   # intradía: cada 10 min, 11:00-17:50 ART, lunes a viernes
     - cron: '15 22 * * 1-5'        # cierre: 19:15 ART (data912 tiene ~2 h de delay)
     - cron: '45 23 * * 1-5'        # cierre, segunda pasada: 20:45 ART (pisa la primera si cambió algo)
+    - cron: '*/30 13-21 * * 1-5'   # cinta de cotizaciones: cada 30 min, 10:00-18:30 ART (cubre NY y BYMA)
+    - cron: '0 23 * * 1-5'         # cinta: cierres del día, 20:00 ART
   workflow_dispatch:
     inputs:
       mode:
         description: 'Modo'
         type: choice
-        options: [eod, live]
+        options: [eod, live, market]
         default: eod
       force:
         description: 'Forzar (ignora fin de semana / detección de feriado)'
@@ -20,7 +22,7 @@ on:
         default: false
 
 concurrency:
-  group: precios
+  group: precios-${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '*/10 14-20 * * 1-5' && 'live' || (github.event.schedule == '*/30 13-21 * * 1-5' || github.event.schedule == '0 23 * * 1-5') && 'market' || 'eod') }}
   cancel-in-progress: false
 
 jobs:
@@ -42,6 +44,6 @@ jobs:
         working-directory: ingest
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '*/10 14-20 * * 1-5' && 'live' || 'eod') }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event.schedule == '*/10 14-20 * * 1-5' && 'live' || (github.event.schedule == '*/30 13-21 * * 1-5' || github.event.schedule == '0 23 * * 1-5') && 'market' || 'eod') }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true && '--force' || '' }}
         run: node capture.js "$MODE" $FORCE

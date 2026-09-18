@@ -45,6 +45,9 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Cinta de cotizaciones (índices, commodities, MEP, riesgo país). La escribe el robot.
+    match /market/{doc} { allow read: if true; allow write: if isAdmin(); }
+
     // Gestor de clientes: datos internos (capital, contacto). Sólo admin.
     match /clients/{id} {
       allow read, write: if isAdmin();

@@ -4,11 +4,11 @@
    actualiza en segundo plano; los datos (Firestore) nunca pasan por acá.
    Cambiar VERSION en cada deploy para renovar la caché.
    ============================================================ */
-var VERSION = 'norte-v202609172332';
+var VERSION = 'norte-v202609180007';
 var SHELL = [
   './', './index.html', './manifest.webmanifest',
   './css/app.css', './css/client.css',
-  './js/firebase-config.js', './js/engine.js', './js/db.js', './js/charts.js', './js/app.js',
+  './js/firebase-config.js', './js/engine.js', './js/db.js', './js/charts.js', './js/ticker.js', './js/app.js',
   './assets/logo-square.png', './assets/logo-original.png', './assets/icon-192.png', './assets/icon-512.png'
 ];
 
