@@ -228,6 +228,85 @@
     },
     deleteAccount: async function (id) { await db.collection('authorized_accounts').doc(id).delete(); },
 
+    // ---------- clientes (gestor) ----------
+    // clients/{id}: name, nameNormalized, greeting, greetingReview, type, accounts[{alyc, comitente, capital}],
+    //               cotitulares[], dni, phone, email, notes, isActive
+    // Cada cuenta se refleja en authorized_accounts/{ALYC_COMITENTE} (índice de login).
+    listClients: async function () {
+      return docs(await db.collection('clients').get()).sort(function (a, b) { return (a.name || '').localeCompare(b.name || '', 'es'); });
+    },
+    // Guarda el cliente y sincroniza sus cuentas en authorized_accounts (borra las que ya no tiene).
+    saveClient: async function (c) {
+      var id = c.id || db.collection('clients').doc().id;
+      var accounts = (c.accounts || []).filter(function (a) { return a.alyc && String(a.comitente).replace(/\D/g, ''); })
+        .map(function (a) { return { alyc: String(a.alyc).toUpperCase(), comitente: String(a.comitente).replace(/\D/g, ''), capital: Number(a.capital) || 0 }; });
+      var prev = c.id ? await db.collection('clients').doc(id).get() : null;
+      var prevAcc = prev && prev.exists ? (prev.data().accounts || []) : [];
+      var b = db.batch();
+      b.set(db.collection('clients').doc(id), clean({
+        name: (c.name || '').trim(), nameNormalized: c.nameNormalized || N.clientes.nombreNormalizado(c.name), greeting: (c.greeting || '').trim(),
+        greetingReview: !!c.greetingReview, type: c.type === 'PJ' ? 'PJ' : 'PH', accounts: accounts, cotitulares: c.cotitulares || [],
+        dni: c.dni || '', phone: c.phone || '', email: c.email || '', notes: c.notes || '', isActive: c.isActive !== false,
+        createdAt: c.id ? undefined : ts(), updatedAt: ts()
+      }), { merge: true });
+      accounts.forEach(function (a) {
+        b.set(db.collection('authorized_accounts').doc(accountId(a.alyc, a.comitente)), {
+          alyc: a.alyc, comitente: a.comitente, clientId: id, clientName: (c.name || '').trim(), greeting: (c.greeting || '').trim(),
+          isActive: c.isActive !== false, updatedAt: ts()
+        }, { merge: true });
+      });
+      prevAcc.forEach(function (a) {
+        if (!accounts.some(function (x) { return x.alyc === a.alyc && x.comitente === a.comitente; })) b.delete(db.collection('authorized_accounts').doc(accountId(a.alyc, a.comitente)));
+      });
+      await b.commit();
+      return id;
+    },
+    deleteClient: async function (c) {
+      var b = db.batch();
+      (c.accounts || []).forEach(function (a) { b.delete(db.collection('authorized_accounts').doc(accountId(a.alyc, a.comitente))); });
+      b.delete(db.collection('clients').doc(c.id));
+      await b.commit();
+    },
+    // Une dos clientes: las cuentas de `drop` pasan a `keep`; `drop` se borra.
+    mergeClients: async function (keep, drop) {
+      var accounts = (keep.accounts || []).slice();
+      (drop.accounts || []).forEach(function (a) { if (!accounts.some(function (x) { return x.alyc === a.alyc && x.comitente === a.comitente; })) accounts.push(a); });
+      var merged = Object.assign({}, keep, { accounts: accounts, cotitulares: (keep.cotitulares || []).concat(drop.cotitulares || []),
+        notes: [keep.notes, drop.notes].filter(Boolean).join('\n') });
+      await db.collection('clients').doc(drop.id).delete();
+      await N.db.saveClient(merged);
+    },
+    // Importación: lista de clientes agrupados (sin id). Si una cuenta ya existe, actualiza el capital del cliente
+    // que la tiene; si el nombre normalizado ya existe, agrega las cuentas nuevas a ese cliente.
+    importClients: async function (grupos) {
+      var existentes = await N.db.listClients();
+      var porNombre = {}, porCuenta = {};
+      existentes.forEach(function (c) { porNombre[c.nameNormalized] = c; (c.accounts || []).forEach(function (a) { porCuenta[a.alyc + '_' + a.comitente] = c; }); });
+      var nuevos = 0, actualizados = 0;
+      for (var i = 0; i < grupos.length; i++) {
+        var g = grupos[i], target = porNombre[g.nameNormalized];
+        if (!target) { for (var k = 0; k < g.accounts.length; k++) { var t = porCuenta[g.accounts[k].alyc + '_' + g.accounts[k].comitente]; if (t) { target = t; break; } } }
+        if (target) {
+          var accounts = (target.accounts || []).slice();
+          g.accounts.forEach(function (a) {
+            var ex = null; accounts.forEach(function (x) { if (x.alyc === a.alyc && x.comitente === a.comitente) ex = x; });
+            if (ex) ex.capital = a.capital; else accounts.push(a);
+          });
+          await N.db.saveClient(Object.assign({}, target, { accounts: accounts }));
+          actualizados++;
+        } else {
+          var id = await N.db.saveClient(g);
+          porNombre[g.nameNormalized] = Object.assign({ id: id }, g);
+          nuevos++;
+        }
+      }
+      return { nuevos: nuevos, actualizados: actualizados };
+    },
+    // Cuentas del índice de login que no pertenecen a ningún cliente (p. ej. cuentas de prueba viejas).
+    listOrphanAccounts: async function () {
+      return docs(await db.collection('authorized_accounts').get()).filter(function (a) { return !a.clientId; });
+    },
+
     // ---------- fichas ----------
     getEducation: async function (all) {
       var col = db.collection('education');

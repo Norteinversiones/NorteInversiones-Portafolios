@@ -37,12 +37,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Comitentes autorizados. Sólo se puede consultar UN documento por su id
-    // (ALYC_COMITENTE); nunca listar la colección.
+    // Comitentes autorizados (índice de login, derivado de clients). Sólo se puede
+    // consultar UN documento por su id (ALYC_COMITENTE); nunca listar la colección.
     match /authorized_accounts/{id} {
       allow get: if true;
       allow list: if isAdmin();
       allow write: if isAdmin();
+    }
+
+    // Gestor de clientes: datos internos (capital, contacto). Sólo admin.
+    match /clients/{id} {
+      allow read, write: if isAdmin();
     }
   }
 }

@@ -55,7 +55,8 @@
     lookup: async function (alyc, comitente) {
       var a = await db.getAccount(alyc, comitente);
       if (!a || a.isActive === false) return null;
-      return { clientId: a.id, displayName: a.clientName || '' };
+      // El saludo lo define el gestor de clientes (campo "Cómo saludarlo"); si falta, el nombre.
+      return { clientId: a.clientId || a.id, displayName: a.greeting || a.clientName || '' };
     }
   };
 
@@ -149,7 +150,7 @@
     }).join('');
     var install = S.installEvt ? '<div class="installtip"><b>Instalá la app en tu teléfono</b> para tenerla a mano. <button class="btn sm amarillo" id="btnInstall">Instalar</button></div>'
       : isIos() && !isStandalone() ? '<div class="installtip"><b>Para instalarla en tu iPhone:</b> tocá el botón Compartir de Safari y elegí "Agregar a inicio".</div>' : '';
-    setView('<h1>Hola' + (S.session && S.session.name ? ', ' + h(S.session.name.split(' ')[0]) : '') + '</h1><p class="muted">Tres portafolios sugeridos, actualizados todos los meses. Valores en ' + (S.moneda === 'USD' ? 'dólares (CCL)' : 'pesos') + '.</p>' +
+    setView('<h1>Hola' + (S.session && S.session.name ? ', ' + h(S.session.name) : '') + '</h1><p class="muted">Tres portafolios sugeridos, actualizados todos los meses. Valores en ' + (S.moneda === 'USD' ? 'dólares (CCL)' : 'pesos') + '.</p>' +
       '<div class="pcards">' + cards + '</div>' +
       '<p><a class="btn sec" href="#/comparar">Comparar los tres</a></p>' + install + legalFoot());
     var bi = $('btnInstall'); if (bi) bi.onclick = async function () { S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; renderHome(); };

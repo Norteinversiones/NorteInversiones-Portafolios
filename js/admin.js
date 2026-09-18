@@ -98,13 +98,14 @@
     var b = e.target.closest('button'); if (!b) return;
     TAB = b.dataset.tab;
     Array.prototype.forEach.call($('tabs').children, function (x) { x.classList.toggle('on', x === b); });
-    ['rotacion', 'historico', 'catalogo', 'comitentes', 'fichas', 'ingesta'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== TAB); });
+    ['rotacion', 'historico', 'catalogo', 'clientes', 'comitentes', 'fichas', 'ingesta'].forEach(function (t) { var el = $('tab-' + t); if (el) el.classList.toggle('hidden', t !== TAB); });
     render();
   });
   function render() {
     if (TAB === 'rotacion') renderRotacion();
     else if (TAB === 'historico') renderHistorico();
     else if (TAB === 'catalogo') renderCatalogo();
+    else if (TAB === 'clientes') N.renderClientes({ freshSection: freshSection, toast: toast, busy: busy, fmtTs: fmtTs }).catch(function (e) { console.error(e); toast('Error: ' + e.message, true); });
     else if (TAB === 'comitentes') renderComitentes();
     else if (TAB === 'fichas') renderFichas();
     else if (TAB === 'ingesta') renderIngesta();
