@@ -176,7 +176,7 @@
     } else {
       html += '<h2>' + h(p.name) + ' · nueva rotación</h2><div class="sub">Se crea un borrador. No cambia nada para los clientes hasta que publiques.</div><div class="row">';
       if (cur) html += '<button class="btn" data-act="newdraft">Nueva rotación (duplicar la vigente)</button><button class="btn sec" data-act="fixdraft">Corregir la versión vigente</button>';
-      if (N.SEED.versions[slug]) html += '<button class="btn sec" data-act="seeddraft">Cargar tenencias del documento (' + E.fmtDate(N.SEED.versions[slug].effectiveFrom) + ')</button>';
+      if (!cur && N.SEED.versions[slug]) html += '<button class="btn sec" data-act="seeddraft">Cargar tenencias del documento (' + E.fmtDate(N.SEED.versions[slug].effectiveFrom) + ')</button>';
       html += '<button class="btn sec" data-act="emptydraft">Empezar en blanco</button></div>';
     }
     html += '</div>';
