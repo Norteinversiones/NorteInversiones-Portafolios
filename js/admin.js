@@ -134,8 +134,16 @@
   // ============================================================
   // ROTACIÓN
   // ============================================================
+  // Reemplaza la sección por un clon vacío para descartar los listeners de renders
+  // anteriores (si se acumulan, un clic ejecuta handlers de OTRO portafolio).
+  function freshSection(id) {
+    var old = $(id), sec = old.cloneNode(false);
+    old.parentNode.replaceChild(sec, old);
+    return sec;
+  }
+
   function renderRotacion() {
-    var sec = $('tab-rotacion');
+    var sec = freshSection('tab-rotacion');
     var slug = S.slug, p = S.pmap[slug], cur = currentVersion(slug), draft = currentDraft(slug);
     if (!S.draft && draft) S.draft = JSON.parse(JSON.stringify(draft));
     var html = pillsHtml();
@@ -154,7 +162,7 @@
         kpi('Beta', E.fmtNum(E.betaPortfolio(cur.holdings), 3)) + '</div>';
       if (st.current && st.current.basisIsPartial) html += '<div class="alert warn">El mes en curso se mide desde el ' + E.fmtDate(st.current.basisDate) + ' (primer cierre disponible), no desde el inicio del mes.</div>';
       if (st.current && st.current.missing && st.current.missing.length) html += '<div class="alert bad">Sin precio: ' + st.current.missing.join(', ') + '. Revisá el catálogo o la ingesta.</div>';
-      html += holdingsTable(cur.holdings, false);
+      html += holdingsTable(cur);
       if (cur.rationale) html += '<p class="mt"><b>Rationale:</b> ' + h(cur.rationale).replace(/\n/g, '<br>') + '</p>';
     } else {
       html += '<div class="sub">Todavía no hay ninguna versión publicada.</div></div></div>';
@@ -187,17 +195,21 @@
   }
   function kpi(l, v, n) { return '<div class="kpi"><div class="l">' + h(l) + '</div><div class="v ' + pctClass(n) + '">' + v + '</div></div>'; }
 
-  function holdingsTable(holdings, live) {
-    var rows = holdings.map(function (hd) {
-      var ins = S.insMap[hd.ticker] || {};
-      var now = S.book ? S.book.priceLatest(hd.ticker) : null;
-      return '<tr><td><b>' + h(hd.ticker) + '</b><br><small>' + h(ins.name || '') + '</small></td><td>' + h(tipo(ins.type)) + '</td>' +
-        '<td class="num">' + E.fmtNum(hd.weightPct, 2) + '%</td><td class="num">' + E.fmtArs(hd.buyPriceArs) + '</td>' +
-        '<td class="num">' + (now ? E.fmtArs(now.price) + '<br><small class="' + pctClass(now.price / hd.buyPriceArs - 1) + '">' + E.fmtPct((now.price / hd.buyPriceArs - 1) * 100) + '</small>' : '—') + '</td>' +
-        '<td class="num">' + E.fmtNum(hd.beta, 2) + '</td></tr>';
+  // Tabla de tenencias de una versión: ARS y USD (USD = ARS / CCL del día, §5.3).
+  function holdingsTable(version) {
+    var holdings = version.holdings || [];
+    var hs = S.book ? E.holdingsLive(version, S.book) : holdings.map(function (hd) { return { ticker: hd.ticker, weightPct: hd.weightPct, buyArs: hd.buyPriceArs, beta: hd.beta }; });
+    var rows = hs.map(function (x) {
+      var ins = S.insMap[x.ticker] || {};
+      return '<tr><td><b>' + h(x.ticker) + '</b><br><small>' + h(ins.name || '') + '</small></td><td>' + h(tipo(ins.type)) + '</td>' +
+        '<td class="num">' + E.fmtNum(x.weightPct, 2) + '%</td>' +
+        '<td class="num">' + E.fmtArs(x.buyArs) + '<br><small>' + E.fmtUsd(x.buyUsd) + '</small></td>' +
+        '<td class="num">' + (x.nowArs != null ? E.fmtArs(x.nowArs) + '<br><small>' + E.fmtUsd(x.nowUsd) + '</small>' : '—') + '</td>' +
+        '<td class="num">' + (x.varArs != null ? '<span class="' + pctClass(x.varArs) + '">' + E.fmtPct(x.varArs) + '</span><br><small class="' + pctClass(x.varUsd) + '">' + E.fmtPct(x.varUsd) + '</small>' : '—') + '</td>' +
+        '<td class="num">' + E.fmtNum(x.beta, 2) + '</td></tr>';
     }).join('');
-    return '<div class="tablewrap"><table><thead><tr><th>Activo</th><th>Tipo</th><th class="num">%</th><th class="num">Compra ARS</th><th class="num">Último</th><th class="num">Beta</th></tr></thead><tbody>' + rows +
-      '<tr class="total"><td colspan="2">Total</td><td class="num">' + E.fmtNum(E.weightTotal(holdings), 2) + '%</td><td></td><td></td><td class="num">' + E.fmtNum(E.betaPortfolio(holdings), 3) + '</td></tr></tbody></table></div>';
+    return '<div class="tablewrap"><table><thead><tr><th>Activo</th><th>Tipo</th><th class="num">%</th><th class="num">Compra<br><small>ARS / USD</small></th><th class="num">Último<br><small>ARS / USD</small></th><th class="num">Resultado<br><small>ARS / USD</small></th><th class="num">Beta</th></tr></thead><tbody>' + rows +
+      '<tr class="total"><td colspan="2">Total</td><td class="num">' + E.fmtNum(E.weightTotal(holdings), 2) + '%</td><td></td><td></td><td></td><td class="num">' + E.fmtNum(E.betaPortfolio(holdings), 3) + '</td></tr></tbody></table></div>';
   }
 
   function renderEditor(d, cur) {
@@ -335,9 +347,11 @@
   // HISTÓRICO (serie legacy + meses calculados)
   // ============================================================
   async function renderHistorico() {
-    var sec = $('tab-historico'), slug = S.slug;
+    var sec = freshSection('tab-historico'), slug = S.slug;
     sec.innerHTML = pillsHtml() + '<p class="muted">Cargando…</p>'; bindPills(sec);
     if (!S.monthly[slug]) S.monthly[slug] = await db.getMonthlyReturns(slug);
+    if (S.slug !== slug) return; // el usuario cambió de portafolio mientras cargaba
+    sec = freshSection('tab-historico');
     var list = S.monthly[slug], st = S.pmap[slug].stats || {};
     var legacy = list.filter(function (m) { return m.isLegacy; });
     var hist = E.buildHistory(legacy, list.filter(function (m) { return !m.isLegacy; }));
