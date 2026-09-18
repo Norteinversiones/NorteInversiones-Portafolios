@@ -17,7 +17,7 @@
 
   // ---- Barras mensuales: items [{label, value, legacy, current}] ----
   function bars(opts) {
-    var items = opts.items || [], W = 720, H = opts.height || 240, padL = 44, padR = 8, padT = 14, padB = 34;
+    var items = opts.items || [], W = 720, H = opts.height || 250, padL = 44, padR = 8, padT = 24, padB = 34;
     if (!items.length) return '<p class="muted">Sin datos todavía.</p>';
     var vals = items.map(function (i) { return Number(i.value) || 0; });
     var max = Math.max(0, Math.max.apply(null, vals)), min = Math.min(0, Math.min.apply(null, vals));
@@ -33,20 +33,17 @@
       out += '<text x="' + (padL - 6) + '" y="' + (y(t) + 4) + '" font-size="11" text-anchor="end" fill="' + GRIS + '">' + fmtTick(t) + '</text>';
     }
     var labelEvery = n > 18 ? 3 : n > 9 ? 2 : 1;
-    var firstApp = -1;
     items.forEach(function (it, i) {
       var v = vals[i], x = padL + i * slot + (slot - bw) / 2;
       var top = Math.min(y(0), y(v)), h = Math.abs(y(v) - y(0));
       var fill = v >= 0 ? POS : NEG;
-      out += '<rect x="' + x + '" y="' + top + '" width="' + bw + '" height="' + Math.max(1, h) + '" rx="3" fill="' + fill + '"' + (it.legacy ? ' opacity="0.45"' : '') + (it.current ? ' stroke="' + AMARILLO + '" stroke-width="2"' : '') + '><title>' + esc(it.title || it.label) + ': ' + fmtTick(v) + '</title></rect>';
+      // Cada barra es un grupo: al tocarla (o pasar el mouse) se muestra el % del mes.
+      out += '<g class="bar' + (it.current ? ' on' : '') + '" tabindex="0" role="button" aria-label="' + esc(it.title || it.label) + ': ' + fmtTick(v) + '">' +
+        '<rect x="' + (padL + i * slot) + '" y="' + padT + '" width="' + slot + '" height="' + ih + '" fill="transparent"/>' +
+        '<rect x="' + x + '" y="' + top + '" width="' + bw + '" height="' + Math.max(1, h) + '" rx="3" fill="' + fill + '"' + (it.legacy ? ' opacity="0.45"' : '') + (it.current ? ' stroke="' + AMARILLO + '" stroke-width="2"' : '') + '/>' +
+        '<text class="val" x="' + (x + bw / 2) + '" y="' + (v >= 0 ? top - 5 : top + h + 12) + '" font-size="11" font-weight="600" text-anchor="middle" fill="' + NEGRO + '">' + fmtTick(v) + '</text></g>';
       if (i % labelEvery === 0 || i === n - 1) out += '<text x="' + (x + bw / 2) + '" y="' + (H - padB + 16) + '" font-size="11" text-anchor="middle" fill="' + GRIS + '">' + esc(it.label) + '</text>';
-      if (firstApp < 0 && !it.legacy && i > 0 && items[i - 1].legacy) firstApp = i;
     });
-    if (firstApp > 0) {
-      var xs = padL + firstApp * slot;
-      out += '<line x1="' + xs + '" x2="' + xs + '" y1="' + padT + '" y2="' + (H - padB) + '" stroke="' + AMARILLO + '" stroke-width="2" stroke-dasharray="4 3"/>';
-      out += '<text x="' + (xs + 4) + '" y="' + (padT + 10) + '" font-size="10" fill="' + NEGRO + '">desde la app</text>';
-    }
     return out + '</svg>';
   }
 
@@ -70,9 +67,6 @@
     }
     var labelEvery = n > 18 ? 3 : n > 9 ? 2 : 1;
     labels.forEach(function (l, i) { if (i % labelEvery === 0 || i === n - 1) out += '<text x="' + x(i) + '" y="' + (H - padB + 16) + '" font-size="11" text-anchor="middle" fill="' + GRIS + '">' + esc(l) + '</text>'; });
-    if (opts.splitAt > 0) {
-      out += '<line x1="' + x(opts.splitAt) + '" x2="' + x(opts.splitAt) + '" y1="' + padT + '" y2="' + (H - padB) + '" stroke="' + AMARILLO + '" stroke-width="2" stroke-dasharray="4 3"/>';
-    }
     series.forEach(function (s) {
       var d = '', started = false;
       s.points.forEach(function (p, i) { if (p == null) { started = false; return; } d += (started ? ' L' : ' M') + x(i).toFixed(1) + ' ' + y(p).toFixed(1); started = true; });

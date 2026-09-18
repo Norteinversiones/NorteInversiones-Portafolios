@@ -68,6 +68,10 @@ body.client { padding-bottom: 76px; }
 .legend .sw { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
 .donutwrap { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 
+/* barras: el % se muestra al tocar / pasar el mouse (y siempre en el mes en curso) */
+svg .bar { cursor: pointer; outline: none; }
+svg .bar .val { display: none; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+svg .bar.on .val, svg .bar:hover .val, svg .bar:focus .val { display: block; }
 .ymtable td, .ymtable th { padding: 6px 6px; font-size: 13px; }
 .ymtable td.num { font-variant-numeric: tabular-nums; }
 .ymtable .leg { opacity: .6; }

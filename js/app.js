@@ -278,6 +278,15 @@
   }
 
   function bindDetail(slug, tab) {
+    // Tocar una barra deja fijo su % (y saca el de las demás, salvo el mes en curso).
+    document.querySelectorAll('svg .bar').forEach(function (g) {
+      g.addEventListener('click', function () {
+        var on = g.classList.contains('on') && !g.dataset.fixed;
+        g.parentNode.querySelectorAll('.bar.on').forEach(function (o) { if (o !== g && !o.dataset.fixed) o.classList.remove('on'); });
+        g.classList.toggle('on', !on || !!g.dataset.fixed);
+      });
+      if (g.classList.contains('on')) g.dataset.fixed = '1';
+    });
     document.querySelectorAll('[data-ficha]').forEach(function (el) { el.onclick = function (e) { e.preventDefault(); e.stopPropagation(); openFicha(el.dataset.ficha); }; });
     if (tab === 'simulador') {
       $('simGo').onclick = function () { var d = $('simDate').value; if (!E.isValidDate(d)) return toast('Elegí una fecha'); runSim(slug, d); };
