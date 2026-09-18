@@ -121,6 +121,40 @@
       await b.commit();
     },
 
+    // Restaura una versión reemplazada: vuelve a "published" y manda a "replaced" a las
+    // publicadas con la misma fecha. Si es la más nueva, pasa a ser la vigente.
+    restoreVersion: async function (slug, id) {
+      var col = db.collection('portfolios').doc(slug).collection('versions');
+      var all = docs(await col.get());
+      var target = all.filter(function (v) { return v.id === id; })[0];
+      if (!target) throw new Error('Versión no encontrada');
+      var b = db.batch();
+      all.forEach(function (v) {
+        if (v.id !== id && v.status === 'published' && v.effectiveFrom === target.effectiveFrom) {
+          b.set(col.doc(v.id), { status: 'replaced', replacedBy: id, replacedAt: ts(), updatedAt: ts() }, { merge: true });
+        }
+      });
+      var later = all.filter(function (v) { return v.id !== id && v.status === 'published' && v.effectiveFrom > target.effectiveFrom; })
+        .sort(byField('effectiveFrom'));
+      b.set(col.doc(id), {
+        status: 'published', effectiveTo: later.length ? later[0].effectiveFrom : null,
+        replacedBy: firebase.firestore.FieldValue.delete(), replacedAt: firebase.firestore.FieldValue.delete(), updatedAt: ts()
+      }, { merge: true });
+      if (!later.length) b.set(db.collection('portfolios').doc(slug), { currentVersionId: id, currentEffectiveFrom: target.effectiveFrom, updatedAt: ts() }, { merge: true });
+      await b.commit();
+    },
+    // Manda una versión publicada a "replaced" (duplicados). Si era la vigente, la vigente pasa a la publicada más nueva.
+    retireVersion: async function (slug, id) {
+      var col = db.collection('portfolios').doc(slug).collection('versions');
+      var all = docs(await col.get());
+      var b = db.batch();
+      b.set(col.doc(id), { status: 'replaced', replacedAt: ts(), updatedAt: ts() }, { merge: true });
+      var rest = all.filter(function (v) { return v.id !== id && v.status === 'published'; }).sort(byField('effectiveFrom'));
+      var cur = rest.length ? rest[rest.length - 1] : null;
+      b.set(db.collection('portfolios').doc(slug), { currentVersionId: cur ? cur.id : null, currentEffectiveFrom: cur ? cur.effectiveFrom : null, updatedAt: ts() }, { merge: true });
+      await b.commit();
+    },
+
     // ---------- cotizaciones ----------
     getLiveQuote: async function () {
       var d = await db.collection('quotes').doc('live').get();

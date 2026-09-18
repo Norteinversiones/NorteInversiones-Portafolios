@@ -181,12 +181,23 @@
     }
     html += '</div>';
 
-    // --- versiones anteriores ---
-    var prev = published(slug).slice(0, -1).reverse();
-    if (prev.length) {
-      html += '<div class="card flat"><h3>Rotaciones anteriores</h3><ul class="verlist">' + prev.map(function (v) {
-        return '<li>' + E.fmtDate(v.effectiveFrom) + ' → ' + (v.effectiveTo ? E.fmtDate(v.effectiveTo) : 'vigente') + ' · ' + v.holdings.length + ' activos · beta ' + E.fmtNum(E.betaPortfolio(v.holdings), 3) + '</li>';
-      }).join('') + '</ul></div>';
+    // --- todas las versiones (publicadas, reemplazadas, borradores) ---
+    var todas = (S.versions[slug] || []).slice().sort(function (a, b) {
+      if (a.effectiveFrom !== b.effectiveFrom) return a.effectiveFrom < b.effectiveFrom ? 1 : -1;
+      var ta = a.publishedAt && a.publishedAt.toMillis ? a.publishedAt.toMillis() : 0, tb = b.publishedAt && b.publishedAt.toMillis ? b.publishedAt.toMillis() : 0;
+      return tb - ta;
+    });
+    if (todas.length) {
+      html += '<div class="card flat"><h3>Todas las versiones de ' + h(p.name) + '</h3><p class="sub">Una versión <b>reemplazada</b> se puede restaurar; una publicada duplicada se puede retirar. Cada cambio recalcula los rendimientos.</p>' +
+        '<div class="tablewrap"><table><thead><tr><th>Rotación</th><th>Estado</th><th>Activos</th><th>Publicada</th><th></th></tr></thead><tbody>' +
+        todas.map(function (v) {
+          var esCur = cur && v.id === cur.id;
+          var tag = v.status === 'published' ? (esCur ? '<span class="tag ok">vigente</span>' : '<span class="tag ok">publicada</span>') : v.status === 'replaced' ? '<span class="tag">reemplazada</span>' : '<span class="tag draft">borrador</span>';
+          var tks = (v.holdings || []).map(function (x) { return x.ticker; }).join(', ');
+          var acc = v.status === 'replaced' ? '<button class="btn sm sec" data-act="restore" data-id="' + v.id + '">Restaurar</button>'
+            : v.status === 'published' ? '<button class="btn sm danger" data-act="retire" data-id="' + v.id + '">Retirar</button>' : '';
+          return '<tr><td class="nowrap">' + E.fmtDate(v.effectiveFrom) + (v.effectiveTo ? ' → ' + E.fmtDate(v.effectiveTo) : '') + '</td><td>' + tag + '</td><td><small>' + h(tks) + '</small></td><td class="nowrap"><small>' + fmtTs(v.publishedAt) + '</small></td><td>' + acc + '</td></tr>';
+        }).join('') + '</tbody></table></div></div>';
     }
 
     sec.innerHTML = html;
@@ -292,6 +303,14 @@
         else if (act === 'savedraft') { await saveDraft(slug); toast('Borrador guardado'); }
         else if (act === 'publish') { await publish(slug, cur); }
         else if (act === 'recalc') { busy(true); await N.recompute(slug, { force: false }); await reloadPortfolio(slug); busy(false); renderRotacion(); toast('Rendimientos recalculados'); }
+        else if (act === 'restore') {
+          if (!confirm('Restaurar esta versión como publicada. Las publicadas con la misma fecha quedan reemplazadas y se recalcula todo. ¿Confirmás?')) return;
+          busy(true); await db.restoreVersion(slug, b.dataset.id); await N.recompute(slug, { force: true }); await reloadPortfolio(slug); S.draft = null; busy(false); renderRotacion(); toast('Versión restaurada');
+        }
+        else if (act === 'retire') {
+          if (!confirm('Retirar esta versión publicada (pasa a reemplazada) y recalcular. ¿Confirmás?')) return;
+          busy(true); await db.retireVersion(slug, b.dataset.id); await N.recompute(slug, { force: true }); await reloadPortfolio(slug); S.draft = null; busy(false); renderRotacion(); toast('Versión retirada');
+        }
       } catch (err) { busy(false); console.error(err); toast('Error: ' + (err.message || err), true); }
     });
   }
