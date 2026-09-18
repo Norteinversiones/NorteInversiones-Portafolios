@@ -174,7 +174,7 @@
       if (ex) actualiza++; else nuevos++;
       if (g.accounts.length > 1) multi++; if (g.greetingReview) revisar++;
     });
-    box.innerHTML = '<div class="alert info"><b>' + h(p.archivo) + '</b> · hoja "' + h(p.hoja) + '" · ' + p.filas + ' cuentas válidas → <b>' + p.grupos.length + ' clientes</b> (' + nuevos + ' nuevos, ' + actualiza + ' ya existentes que se actualizan) · ' + multi + ' con más de una cuenta +
+    box.innerHTML = '<div class="alert info"><b>' + h(p.archivo) + '</b> · hoja "' + h(p.hoja) + '" · ' + p.filas + ' cuentas válidas → <b>' + p.grupos.length + ' clientes</b> (' + nuevos + ' nuevos, ' + actualiza + ' ya existentes que se actualizan) · ' + multi + ' con más de una cuenta' +
       (p.errores.length ? '<br><span class="neg">' + p.errores.length + ' filas salteadas: ' + p.errores.slice(0, 5).map(function (e) { return 'fila ' + e.fila + ' (' + e.motivo + ')'; }).join(', ') + (p.errores.length > 5 ? '…' : '') + '</span>' : '') + '</div>' +
       '<div class="tablewrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>Cliente</th><th>Saludo</th><th>Cuentas</th></tr></thead><tbody>' +
       p.grupos.map(function (g) { return '<tr><td>' + h(g.name) + (g.cotitulares.length ? '<br><small>y/o ' + h(g.cotitulares.join(', ')) + '</small>' : '') + '</td><td>' + h(g.greeting) + '</td><td><small>' + g.accounts.map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente + ' · ' + fmtArs0(a.capital); }).join('<br>') + '</small></td></tr>'; }).join('') +
