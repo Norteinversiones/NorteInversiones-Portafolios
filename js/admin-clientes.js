@@ -32,16 +32,16 @@
       return (c.name || '').toLowerCase().indexOf(q) >= 0 || (c.greeting || '').toLowerCase().indexOf(q) >= 0 || (c.accounts || []).some(function (a) { return String(a.comitente).indexOf(q) >= 0; });
     });
 
-    var html = '<div class="card"><div class="row between"><h2>Clientes</h2><div class="row"><span class="tag ok">' + list.length + ' clientes</span><span class="tag">' + cuentas + ' cuentas</span>' + (revisar ? '<span class="tag warn">' + revisar + ' saludos a revisar</span>' : '') + '</div></div>' +
+    var html = '<div class="card"><div class="row between"><h2>Clientes</h2><div class="row"><span class="tag ok">' + list.length + ' clientes</span><span class="tag">' + cuentas + ' cuentas</span>' + '</div></div>' +
       '<div class="kpis mb">' + ['IOL', 'BALANZ', 'COCOS'].map(function (a) { return '<div class="kpi"><div class="l">Capital ' + alycLabel(a) + '</div><div class="v">' + fmtArs0(tot[a]) + '</div></div>'; }).join('') +
       '<div class="kpi"><div class="l">Capital total</div><div class="v">' + fmtArs0(tot.all) + '</div></div></div>' +
       '<div class="row"><input type="search" id="clQ" class="grow" placeholder="Buscar por nombre, saludo o comitente" value="' + h(CS.q) + '">' +
-      '<label class="check"><input type="checkbox" id="clRev"' + (CS.soloRevisar ? ' checked' : '') + '> Sólo saludos a revisar</label>' +
+
       '<button class="btn sm" data-act="new">+ Nuevo cliente</button></div>' +
       '<div class="tablewrap mt"><table><thead><tr><th>Cliente</th><th>Saludo</th><th>Cuentas</th><th class="num">Capital</th><th></th></tr></thead><tbody>' +
       visibles.slice(0, 400).map(function (c) {
         return '<tr data-id="' + h(c.id) + '" style="cursor:pointer"><td><b>' + h(c.name) + '</b>' + (c.type === 'PJ' ? ' <span class="tag">PJ</span>' : '') + (c.isActive === false ? ' <span class="tag bad">inactivo</span>' : '') + (c.cotitulares && c.cotitulares.length ? '<br><small>y/o ' + h(c.cotitulares.join(', ')) + '</small>' : '') + '</td>' +
-          '<td>' + h(c.greeting) + (c.greetingReview ? ' <span class="tag warn">revisar</span>' : '') + '</td>' +
+          '<td>' + h(c.greeting) + '</td>' +
           '<td><small>' + (c.accounts || []).map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente; }).join('<br>') + '</small></td>' +
           '<td class="num">' + fmtArs0(CL.capitalTotal(c)) + '</td><td>›</td></tr>';
       }).join('') + '</tbody></table>' + (visibles.length > 400 ? '<p class="muted">Se muestran 400 de ' + visibles.length + '.</p>' : '') + (!list.length ? '<p class="muted">Todavía no hay clientes. Subí la planilla en el cuadro de la derecha.</p>' : '') + '</div></div>';
@@ -71,7 +71,7 @@
 
     // ---- eventos ----
     $('clQ').oninput = function () { CS.q = this.value; N.renderClientes(ctx); };
-    $('clRev').onchange = function () { CS.soloRevisar = this.checked; N.renderClientes(ctx); };
+
     sec.querySelectorAll('tr[data-id]').forEach(function (tr) { tr.onclick = function () { CS.edit = JSON.parse(JSON.stringify(list.filter(function (c) { return c.id === tr.dataset.id; })[0])); N.renderClientes(ctx).then(function () { $('clForm').scrollIntoView({ behavior: 'smooth', block: 'start' }); }); }; });
     $('clFile').onchange = function () { leerArchivo(this.files[0], ctx); };
     bindForm(sec, ctx);
@@ -107,7 +107,7 @@
       '<label class="f"><span>Nombre completo (como figura en el bróker)</span><input type="text" data-c="name" value="' + h(c.name) + '"></label>' +
       '<div class="row"><label class="f grow"><span>Cómo saludarlo en la app ("Hola, …")</span><input type="text" data-c="greeting" value="' + h(c.greeting) + '"></label>' +
       '<label class="f"><span>Tipo</span><select data-c="type"><option value="PH"' + (c.type !== 'PJ' ? ' selected' : '') + '>Persona humana</option><option value="PJ"' + (c.type === 'PJ' ? ' selected' : '') + '>Persona jurídica</option></select></label></div>' +
-      '<div class="row"><label class="check"><input type="checkbox" data-c="greetingReview"' + (c.greetingReview ? ' checked' : '') + '> Saludo pendiente de revisar</label>' +
+      '<div class="row">' +
       '<label class="check"><input type="checkbox" data-c="isActive"' + (c.isActive !== false ? ' checked' : '') + '> Activo (puede entrar a la app)</label></div>' +
       (c.cotitulares && c.cotitulares.length ? '<p class="muted">Cotitulares: ' + h(c.cotitulares.join(', ')) + '</p>' : '') +
       '<h3 class="mt">Cuentas comitente</h3><div class="tablewrap"><table><thead><tr><th>Bróker</th><th>Comitente</th><th>Capital (ARS)</th><th></th></tr></thead><tbody>' + acc + '</tbody></table></div>' +
@@ -174,10 +174,10 @@
       if (ex) actualiza++; else nuevos++;
       if (g.accounts.length > 1) multi++; if (g.greetingReview) revisar++;
     });
-    box.innerHTML = '<div class="alert info"><b>' + h(p.archivo) + '</b> · hoja "' + h(p.hoja) + '" · ' + p.filas + ' cuentas válidas → <b>' + p.grupos.length + ' clientes</b> (' + nuevos + ' nuevos, ' + actualiza + ' ya existentes que se actualizan) · ' + multi + ' con más de una cuenta · ' + revisar + ' saludos a revisar' +
+    box.innerHTML = '<div class="alert info"><b>' + h(p.archivo) + '</b> · hoja "' + h(p.hoja) + '" · ' + p.filas + ' cuentas válidas → <b>' + p.grupos.length + ' clientes</b> (' + nuevos + ' nuevos, ' + actualiza + ' ya existentes que se actualizan) · ' + multi + ' con más de una cuenta +
       (p.errores.length ? '<br><span class="neg">' + p.errores.length + ' filas salteadas: ' + p.errores.slice(0, 5).map(function (e) { return 'fila ' + e.fila + ' (' + e.motivo + ')'; }).join(', ') + (p.errores.length > 5 ? '…' : '') + '</span>' : '') + '</div>' +
       '<div class="tablewrap" style="max-height:320px;overflow:auto"><table><thead><tr><th>Cliente</th><th>Saludo</th><th>Cuentas</th></tr></thead><tbody>' +
-      p.grupos.map(function (g) { return '<tr><td>' + h(g.name) + (g.cotitulares.length ? '<br><small>y/o ' + h(g.cotitulares.join(', ')) + '</small>' : '') + '</td><td>' + h(g.greeting) + (g.greetingReview ? ' <span class="tag warn">revisar</span>' : '') + '</td><td><small>' + g.accounts.map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente + ' · ' + fmtArs0(a.capital); }).join('<br>') + '</small></td></tr>'; }).join('') +
+      p.grupos.map(function (g) { return '<tr><td>' + h(g.name) + (g.cotitulares.length ? '<br><small>y/o ' + h(g.cotitulares.join(', ')) + '</small>' : '') + '</td><td>' + h(g.greeting) + '</td><td><small>' + g.accounts.map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente + ' · ' + fmtArs0(a.capital); }).join('<br>') + '</small></td></tr>'; }).join('') +
       '</tbody></table></div><div class="row mt"><button class="btn amarillo" data-act="import">Importar ' + p.grupos.length + ' clientes</button><button class="btn sec" data-act="cancelimport">Cancelar</button></div>';
   }
   async function confirmarImport(ctx) {
