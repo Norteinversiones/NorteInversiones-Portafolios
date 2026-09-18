@@ -141,3 +141,8 @@ table input.w-s { width: 80px; } table input.w-m { width: 120px; } table select.
   h1 { font-size: 22px; }
   .topbar .user span.mail { display: none; }
 }
+
+/* fila desplegable del gestor de clientes */
+.editrow > td { background: var(--gris-4); padding: 10px; }
+.editrow .card.flat { margin: 0; background: var(--blanco); }
+tr[data-id]:hover td { background: #FAFAFA; }

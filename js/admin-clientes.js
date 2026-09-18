@@ -22,8 +22,8 @@
     var list = CS.list;
 
     // ---- totales ----
-    var tot = { IOL: 0, COCOS: 0, BALANZ: 0, all: 0 }, cuentas = 0, revisar = 0;
-    list.forEach(function (c) { (c.accounts || []).forEach(function (a) { tot[a.alyc] = (tot[a.alyc] || 0) + (Number(a.capital) || 0); tot.all += Number(a.capital) || 0; cuentas++; }); if (c.greetingReview) revisar++; });
+    var tot = { IOL: 0, COCOS: 0, BALANZ: 0, all: 0 }, cnt = { IOL: 0, COCOS: 0, BALANZ: 0 }, cuentas = 0;
+    list.forEach(function (c) { (c.accounts || []).forEach(function (a) { tot[a.alyc] = (tot[a.alyc] || 0) + (Number(a.capital) || 0); cnt[a.alyc] = (cnt[a.alyc] || 0) + 1; tot.all += Number(a.capital) || 0; cuentas++; }); });
 
     var q = CS.q.toLowerCase();
     var visibles = list.filter(function (c) {
@@ -33,8 +33,8 @@
     });
 
     var html = '<div class="card"><div class="row between"><h2>Clientes</h2><div class="row"><span class="tag ok">' + list.length + ' clientes</span><span class="tag">' + cuentas + ' cuentas</span>' + '</div></div>' +
-      '<div class="kpis mb">' + ['IOL', 'BALANZ', 'COCOS'].map(function (a) { return '<div class="kpi"><div class="l">Capital ' + alycLabel(a) + '</div><div class="v">' + fmtArs0(tot[a]) + '</div></div>'; }).join('') +
-      '<div class="kpi"><div class="l">Capital total</div><div class="v">' + fmtArs0(tot.all) + '</div></div></div>' +
+      '<div class="kpis mb">' + ['IOL', 'BALANZ', 'COCOS'].map(function (a) { return '<div class="kpi"><div class="l">Capital ' + alycLabel(a) + '</div><div class="v">' + fmtArs0(tot[a]) + '</div><small class="muted">' + (cnt[a] || 0) + ' cuentas</small></div>'; }).join('') +
+      '<div class="kpi"><div class="l">Capital total</div><div class="v">' + fmtArs0(tot.all) + '</div><small class="muted">' + cuentas + ' cuentas · ' + list.length + ' clientes</small></div></div>' +
       '<div class="row"><input type="search" id="clQ" class="grow" placeholder="Buscar por nombre, saludo o comitente" value="' + h(CS.q) + '">' +
 
       '<button class="btn sm" data-act="new">+ Nuevo cliente</button></div>' +
@@ -43,12 +43,13 @@
         return '<tr data-id="' + h(c.id) + '" style="cursor:pointer"><td><b>' + h(c.name) + '</b>' + (c.type === 'PJ' ? ' <span class="tag">PJ</span>' : '') + (c.isActive === false ? ' <span class="tag bad">inactivo</span>' : '') + (c.cotitulares && c.cotitulares.length ? '<br><small>y/o ' + h(c.cotitulares.join(', ')) + '</small>' : '') + '</td>' +
           '<td>' + h(c.greeting) + '</td>' +
           '<td><small>' + (c.accounts || []).map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente; }).join('<br>') + '</small></td>' +
-          '<td class="num">' + fmtArs0(CL.capitalTotal(c)) + '</td><td>›</td></tr>';
+          '<td class="num">' + fmtArs0(CL.capitalTotal(c)) + '</td><td>' + (CS.edit && CS.edit.id === c.id ? '▾' : '›') + '</td></tr>' +
+          (CS.edit && CS.edit.id === c.id ? '<tr class="editrow"><td colspan="5"><div class="card flat" id="clForm">' + formHtml(CS.edit) + '</div></td></tr>' : '');
       }).join('') + '</tbody></table>' + (visibles.length > 400 ? '<p class="muted">Se muestran 400 de ' + visibles.length + '.</p>' : '') + (!list.length ? '<p class="muted">Todavía no hay clientes. Subí la planilla en el cuadro de la derecha.</p>' : '') + '</div></div>';
 
     // ---- ficha / importación ----
     html += '<div class="grid2">';
-    html += '<div class="card" id="clForm">' + formHtml(CS.edit) + '</div>';
+    html += CS.edit && !CS.edit.id ? '<div class="card" id="clForm">' + formHtml(CS.edit) + '</div>' : '<div class="card"><h2>Ficha del cliente</h2><p class="muted">Tocá un cliente de la lista para desplegar su ficha debajo, o creá uno nuevo con el botón de arriba.</p></div>';
     html += '<div><div class="card"><h2>Importar planilla</h2><div class="sub">Subí el Excel de clientes (columnas <b>Cliente, Broker, Comitente, PH/PJ, Capital</b>). Las cuentas de la misma persona se agrupan en un cliente; las que ya existen actualizan su capital. Nada se guarda hasta que confirmes.</div>' +
       '<input type="file" id="clFile" accept=".xlsx,.xls,.csv"><div id="clPreview" class="mt"></div></div>';
 
@@ -72,7 +73,7 @@
     // ---- eventos ----
     $('clQ').oninput = function () { CS.q = this.value; N.renderClientes(ctx); };
 
-    sec.querySelectorAll('tr[data-id]').forEach(function (tr) { tr.onclick = function () { CS.edit = JSON.parse(JSON.stringify(list.filter(function (c) { return c.id === tr.dataset.id; })[0])); N.renderClientes(ctx).then(function () { $('clForm').scrollIntoView({ behavior: 'smooth', block: 'start' }); }); }; });
+    sec.querySelectorAll('tr[data-id]').forEach(function (tr) { tr.onclick = function () { if (CS.edit && CS.edit.id === tr.dataset.id) { CS.edit = null; } else { CS.edit = JSON.parse(JSON.stringify(list.filter(function (c) { return c.id === tr.dataset.id; })[0])); } N.renderClientes(ctx).then(function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }); }; });
     $('clFile').onchange = function () { leerArchivo(this.files[0], ctx); };
     bindForm(sec, ctx);
 
@@ -80,7 +81,7 @@
       var b = e.target.closest('[data-act]'); if (!b) return;
       var act = b.dataset.act;
       try {
-        if (act === 'new') { CS.edit = { name: '', greeting: '', type: 'PH', accounts: [{ alyc: 'IOL', comitente: '', capital: 0 }], isActive: true }; N.renderClientes(ctx); }
+        if (act === 'new') { CS.edit = { name: '', greeting: '', type: 'PH', accounts: [{ alyc: 'IOL', comitente: '', capital: 0 }], isActive: true }; N.renderClientes(ctx).then(function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); }
         else if (act === 'merge') {
           var keep = list.filter(function (c) { return c.id === b.dataset.keep; })[0], drop = list.filter(function (c) { return c.id === b.dataset.drop; })[0];
           if (!confirm('Unir "' + drop.name + '" dentro de "' + keep.name + '". Las cuentas pasan al primero. ¿Confirmás?')) return;
