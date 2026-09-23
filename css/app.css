@@ -61,9 +61,10 @@ small, .muted { color: var(--gris-2); }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button { flex: 0 0 auto; border: 1px solid var(--gris-3); background: var(--blanco); color: var(--negro); padding: 8px 14px; border-radius: 999px; font: inherit; font-weight: 500; cursor: pointer; }
 .tabs button.on { background: var(--negro); color: var(--blanco); border-color: var(--negro); }
-.pills { display: inline-flex; gap: 4px; background: var(--gris-4); padding: 4px; border-radius: 999px; }
+.pills { display: inline-flex; flex-wrap: wrap; gap: 4px; background: var(--gris-4); padding: 4px; border-radius: 999px; }
 .pills button { border: 0; background: transparent; padding: 7px 14px; border-radius: 999px; font: inherit; font-weight: 500; color: var(--negro); cursor: pointer; }
 .pills button.on { background: var(--negro); color: var(--blanco); }
+.pills button .n { opacity: .5; font-weight: 600; margin-left: 2px; }
 
 /* ---- tarjetas ---- */
 .card { background: var(--blanco); border-radius: var(--radio); padding: 16px; box-shadow: var(--sombra); margin-bottom: 14px; }

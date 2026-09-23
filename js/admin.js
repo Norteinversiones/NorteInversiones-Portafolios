@@ -491,7 +491,12 @@
       '<div class="row mt"><input type="file" id="csvFile" accept=".csv,.txt"><span class="grow"></span><button class="btn" id="csvImport">Importar</button></div><div id="csvMsg" class="mt"></div></div></div></div>';
     sec.innerHTML = html;
 
-    $('accQ').oninput = function () { S.accQ = this.value; renderComitentes(); };
+    // Este render reemplaza el input, así que hay que devolverle el foco y el cursor
+    // (si no, se pierde el teclado con cada letra).
+    $('accQ').oninput = function () {
+      var pos = this.selectionStart; S.accQ = this.value;
+      renderComitentes().then(function () { var i = $('accQ'); if (!i) return; i.focus(); try { i.setSelectionRange(pos, pos); } catch (e) { } });
+    };
     $('accAdd').onclick = async function () {
       var a = { alyc: $('accAlyc').value, comitente: $('accNum').value, clientName: $('accName').value };
       if (!a.comitente.replace(/\D/g, '')) return toast('Falta el número de comitente', true);

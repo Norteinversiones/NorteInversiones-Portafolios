@@ -7,13 +7,74 @@
 (function () {
   'use strict';
   var N = window.NORTE, E = N.engine, db = N.db, CL = N.clientes;
-  var CS = { list: null, q: '', edit: null, preview: null, orphans: [], soloRevisar: false };
+  var CS = { list: null, q: '', alyc: '', edit: null, preview: null, orphans: [], soloRevisar: false };
 
   function h(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function $(id) { return document.getElementById(id); }
   function num(v) { var n = Number(String(v).replace(',', '.')); return isNaN(n) ? null : n; }
   function fmtArs0(v) { return '$' + E.fmtNum(v, 0); }
-  function alycLabel(a) { return a === 'COCOS' ? 'Cocos' : a === 'BALANZ' ? 'Balanz' : a; }
+  var ALYC_LABEL = { IOL: 'IOL', COCOS: 'Cocos', BALANZ: 'Balanz' };
+  function alycLabel(a) { return ALYC_LABEL[a] || a; }
+
+  // Brókers para los KPIs y el filtro: primero los de la configuración
+  // (NORTE.ALYCS en js/firebase-config.js) y después cualquier otro que aparezca
+  // en los datos, así sumar un bróker nuevo no obliga a tocar esta pantalla.
+  function alycsDisponibles(list) {
+    var visto = {}, out = [];
+    (N.ALYCS || []).forEach(function (a) { if (a && !visto[a]) { visto[a] = 1; out.push(a); } });
+    list.forEach(function (c) { (c.accounts || []).forEach(function (a) { if (a.alyc && !visto[a.alyc]) { visto[a.alyc] = 1; out.push(a.alyc); } }); });
+    return out;
+  }
+  function cuentasDe(c) { return (c.accounts || []).filter(function (a) { return !CS.alyc || a.alyc === CS.alyc; }); }
+  function capitalDe(c) { return cuentasDe(c).reduce(function (s, a) { return s + (Number(a.capital) || 0); }, 0); }
+
+  // Filtro combinado: bróker + texto (nombre, saludo o número de comitente).
+  function filtrar(list) {
+    var q = CS.q.trim().toLowerCase();
+    return list.filter(function (c) {
+      if (CS.soloRevisar && !c.greetingReview) return false;
+      if (CS.alyc && !(c.accounts || []).some(function (a) { return a.alyc === CS.alyc; })) return false;
+      if (!q) return true;
+      return (c.name || '').toLowerCase().indexOf(q) >= 0 || (c.greeting || '').toLowerCase().indexOf(q) >= 0 ||
+        (c.accounts || []).some(function (a) { return String(a.comitente).indexOf(q) >= 0; });
+    });
+  }
+
+  function filtrosHtml(list) {
+    var porAlyc = {};
+    list.forEach(function (c) {
+      var v = {};
+      (c.accounts || []).forEach(function (a) { if (a.alyc && !v[a.alyc]) { v[a.alyc] = 1; porAlyc[a.alyc] = (porAlyc[a.alyc] || 0) + 1; } });
+    });
+    var btn = function (val, txt, n) {
+      return '<button type="button" data-alyc="' + h(val) + '"' + (CS.alyc === val ? ' class="on"' : '') + '>' + h(txt) + ' <span class="n">' + n + '</span></button>';
+    };
+    return '<div class="pills" data-role="alyc">' + btn('', 'Todos', list.length) +
+      alycsDisponibles(list).map(function (a) { return btn(a, alycLabel(a), porAlyc[a] || 0); }).join('') + '</div>';
+  }
+
+  // Contenido de #clLista (tabla + pie). Al buscar o filtrar se repinta sólo esto:
+  // si se volviera a dibujar toda la pestaña, el input se recrearía en cada tecla
+  // y el cursor se perdería.
+  function listaHtml(list) {
+    if (!list.length) return '<p class="muted">Todavía no hay clientes. Subí la planilla en el cuadro de la derecha.</p>';
+    var visibles = filtrar(list), cuentasVis = 0, capVis = 0;
+    visibles.forEach(function (c) { cuentasVis += cuentasDe(c).length; capVis += capitalDe(c); });
+    if (!visibles.length) return '<p class="muted">Ningún cliente coincide con la búsqueda' + (CS.alyc ? ' en ' + h(alycLabel(CS.alyc)) : '') + '. <button class="btn sm sec" data-act="limpiar">Ver todos</button></p>';
+    return '<table><thead><tr><th>Cliente</th><th>Saludo</th><th>Cuentas</th><th class="num">Capital' + (CS.alyc ? ' ' + h(alycLabel(CS.alyc)) : '') + '</th><th></th></tr></thead><tbody>' +
+      visibles.slice(0, 400).map(function (c) {
+        return '<tr data-id="' + h(c.id) + '" style="cursor:pointer"><td><b>' + h(c.name) + '</b>' + (c.type === 'PJ' ? ' <span class="tag">PJ</span>' : '') + (c.isActive === false ? ' <span class="tag bad">inactivo</span>' : '') + (c.cotitulares && c.cotitulares.length ? '<br><small>y/o ' + h(c.cotitulares.join(', ')) + '</small>' : '') + '</td>' +
+          '<td>' + h(c.greeting) + '</td>' +
+          '<td><small>' + (c.accounts || []).map(function (a) {
+            var t = h(alycLabel(a.alyc)) + ' ' + h(a.comitente);
+            return CS.alyc && a.alyc !== CS.alyc ? '<span class="muted">' + t + '</span>' : t;
+          }).join('<br>') + '</small></td>' +
+          '<td class="num">' + fmtArs0(CS.alyc ? capitalDe(c) : CL.capitalTotal(c)) + '</td><td>' + (CS.edit && CS.edit.id === c.id ? '▾' : '›') + '</td></tr>' +
+          (CS.edit && CS.edit.id === c.id ? '<tr class="editrow"><td colspan="5"><div class="card flat" id="clForm">' + formHtml(CS.edit) + '</div></td></tr>' : '');
+      }).join('') + '</tbody></table>' +
+      '<p class="muted">' + visibles.length + (visibles.length === 1 ? ' cliente · ' : ' clientes · ') + cuentasVis + ' cuentas' + (CS.alyc ? ' en ' + h(alycLabel(CS.alyc)) : '') + ' · ' + fmtArs0(capVis) +
+      (visibles.length > 400 ? ' · se muestran las primeras 400' : '') + '</p>';
+  }
 
   N.renderClientes = async function (ctx) {
     var sec = ctx.freshSection('tab-clientes'), toast = ctx.toast, busy = ctx.busy;
@@ -22,30 +83,16 @@
     var list = CS.list;
 
     // ---- totales ----
-    var tot = { IOL: 0, COCOS: 0, BALANZ: 0, all: 0 }, cnt = { IOL: 0, COCOS: 0, BALANZ: 0 }, cuentas = 0;
-    list.forEach(function (c) { (c.accounts || []).forEach(function (a) { tot[a.alyc] = (tot[a.alyc] || 0) + (Number(a.capital) || 0); cnt[a.alyc] = (cnt[a.alyc] || 0) + 1; tot.all += Number(a.capital) || 0; cuentas++; }); });
-
-    var q = CS.q.toLowerCase();
-    var visibles = list.filter(function (c) {
-      if (CS.soloRevisar && !c.greetingReview) return false;
-      if (!q) return true;
-      return (c.name || '').toLowerCase().indexOf(q) >= 0 || (c.greeting || '').toLowerCase().indexOf(q) >= 0 || (c.accounts || []).some(function (a) { return String(a.comitente).indexOf(q) >= 0; });
-    });
+    var alycs = alycsDisponibles(list), tot = {}, cnt = {}, totAll = 0, cuentas = 0;
+    list.forEach(function (c) { (c.accounts || []).forEach(function (a) { tot[a.alyc] = (tot[a.alyc] || 0) + (Number(a.capital) || 0); cnt[a.alyc] = (cnt[a.alyc] || 0) + 1; totAll += Number(a.capital) || 0; cuentas++; }); });
 
     var html = '<div class="card"><div class="row between"><h2>Clientes</h2><div class="row"><span class="tag ok">' + list.length + ' clientes</span><span class="tag">' + cuentas + ' cuentas</span>' + '</div></div>' +
-      '<div class="kpis mb">' + ['IOL', 'BALANZ', 'COCOS'].map(function (a) { return '<div class="kpi"><div class="l">Capital ' + alycLabel(a) + '</div><div class="v">' + fmtArs0(tot[a]) + '</div><small class="muted">' + (cnt[a] || 0) + ' cuentas</small></div>'; }).join('') +
-      '<div class="kpi"><div class="l">Capital total</div><div class="v">' + fmtArs0(tot.all) + '</div><small class="muted">' + cuentas + ' cuentas · ' + list.length + ' clientes</small></div></div>' +
+      '<div class="kpis mb">' + alycs.map(function (a) { return '<div class="kpi"><div class="l">Capital ' + h(alycLabel(a)) + '</div><div class="v">' + fmtArs0(tot[a] || 0) + '</div><small class="muted">' + (cnt[a] || 0) + ' cuentas</small></div>'; }).join('') +
+      '<div class="kpi"><div class="l">Capital total</div><div class="v">' + fmtArs0(totAll) + '</div><small class="muted">' + cuentas + ' cuentas · ' + list.length + ' clientes</small></div></div>' +
       '<div class="row"><input type="search" id="clQ" class="grow" placeholder="Buscar por nombre, saludo o comitente" value="' + h(CS.q) + '">' +
-
       '<button class="btn sm" data-act="new">+ Nuevo cliente</button></div>' +
-      '<div class="tablewrap mt"><table><thead><tr><th>Cliente</th><th>Saludo</th><th>Cuentas</th><th class="num">Capital</th><th></th></tr></thead><tbody>' +
-      visibles.slice(0, 400).map(function (c) {
-        return '<tr data-id="' + h(c.id) + '" style="cursor:pointer"><td><b>' + h(c.name) + '</b>' + (c.type === 'PJ' ? ' <span class="tag">PJ</span>' : '') + (c.isActive === false ? ' <span class="tag bad">inactivo</span>' : '') + (c.cotitulares && c.cotitulares.length ? '<br><small>y/o ' + h(c.cotitulares.join(', ')) + '</small>' : '') + '</td>' +
-          '<td>' + h(c.greeting) + '</td>' +
-          '<td><small>' + (c.accounts || []).map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente; }).join('<br>') + '</small></td>' +
-          '<td class="num">' + fmtArs0(CL.capitalTotal(c)) + '</td><td>' + (CS.edit && CS.edit.id === c.id ? '▾' : '›') + '</td></tr>' +
-          (CS.edit && CS.edit.id === c.id ? '<tr class="editrow"><td colspan="5"><div class="card flat" id="clForm">' + formHtml(CS.edit) + '</div></td></tr>' : '');
-      }).join('') + '</tbody></table>' + (visibles.length > 400 ? '<p class="muted">Se muestran 400 de ' + visibles.length + '.</p>' : '') + (!list.length ? '<p class="muted">Todavía no hay clientes. Subí la planilla en el cuadro de la derecha.</p>' : '') + '</div></div>';
+      '<div class="row mt"><span class="muted">Bróker</span>' + filtrosHtml(list) + '</div>' +
+      '<div class="tablewrap mt" id="clLista">' + listaHtml(list) + '</div></div>';
 
     // ---- ficha / importación ----
     html += '<div class="grid2">';
@@ -71,9 +118,37 @@
     sec.innerHTML = html;
 
     // ---- eventos ----
-    $('clQ').oninput = function () { CS.q = this.value; N.renderClientes(ctx); };
+    // Repintar sólo la lista deja el buscador intacto: no se pierde el foco ni la
+    // posición del cursor mientras se escribe.
+    function repintarLista() {
+      var box = $('clLista'); if (!box) return;
+      box.innerHTML = listaHtml(list);
+      bindFilas();
+      if (CS.edit && CS.edit.id) bindForm(sec, ctx); // la ficha abierta vive dentro de la tabla
+    }
+    function bindFilas() {
+      sec.querySelectorAll('tr[data-id]').forEach(function (tr) {
+        tr.onclick = function () {
+          var eraNuevo = CS.edit && !CS.edit.id; // la tarjeta de "nuevo cliente" está fuera de la lista
+          if (CS.edit && CS.edit.id === tr.dataset.id) CS.edit = null;
+          else CS.edit = JSON.parse(JSON.stringify(list.filter(function (c) { return c.id === tr.dataset.id; })[0]));
+          var foco = function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); };
+          if (eraNuevo) N.renderClientes(ctx).then(foco); else { repintarLista(); foco(); }
+        };
+      });
+    }
+    bindFilas();
 
-    sec.querySelectorAll('tr[data-id]').forEach(function (tr) { tr.onclick = function () { if (CS.edit && CS.edit.id === tr.dataset.id) { CS.edit = null; } else { CS.edit = JSON.parse(JSON.stringify(list.filter(function (c) { return c.id === tr.dataset.id; })[0])); } N.renderClientes(ctx).then(function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }); }; });
+    $('clQ').oninput = function () { CS.q = this.value; repintarLista(); };
+
+    var pills = sec.querySelector('[data-role=alyc]');
+    if (pills) pills.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      CS.alyc = b.dataset.alyc || '';
+      pills.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', (x.dataset.alyc || '') === CS.alyc); });
+      repintarLista();
+    });
+
     $('clFile').onchange = function () { leerArchivo(this.files[0], ctx); };
     bindForm(sec, ctx);
 
@@ -81,7 +156,8 @@
       var b = e.target.closest('[data-act]'); if (!b) return;
       var act = b.dataset.act;
       try {
-        if (act === 'new') { CS.edit = { name: '', greeting: '', type: 'PH', accounts: [{ alyc: 'IOL', comitente: '', capital: 0 }], isActive: true }; N.renderClientes(ctx).then(function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); }
+        if (act === 'new') { CS.edit = { name: '', greeting: '', type: 'PH', accounts: [{ alyc: CS.alyc || 'IOL', comitente: '', capital: 0 }], isActive: true }; N.renderClientes(ctx).then(function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); }
+        else if (act === 'limpiar') { CS.q = ''; CS.alyc = ''; N.renderClientes(ctx); }
         else if (act === 'merge') {
           var keep = list.filter(function (c) { return c.id === b.dataset.keep; })[0], drop = list.filter(function (c) { return c.id === b.dataset.drop; })[0];
           if (!confirm('Unir "' + drop.name + '" dentro de "' + keep.name + '". Las cuentas pasan al primero. ¿Confirmás?')) return;
