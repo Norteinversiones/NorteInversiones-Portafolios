@@ -349,7 +349,7 @@
       '<label class="f"><span>Tipo</span><select data-c="type"><option value="PH"' + (c.type !== 'PJ' ? ' selected' : '') + '>Persona humana</option><option value="PJ"' + (c.type === 'PJ' ? ' selected' : '') + '>Persona jurídica</option></select></label></div>' +
       '<div class="row">' +
       '<label class="check"><input type="checkbox" data-c="isActive"' + (c.isActive !== false ? ' checked' : '') + '> Activo (puede entrar a la app)</label></div>' +
-      '<label class="f"><span>Referido por (opcional · dato interno)</span>' +
+      '<label class="f mt"><span>Referido por (opcional · dato interno)</span>' +
       '<span class="acwrap"><input type="text" data-c="referredBy" id="clRefIn" autocomplete="off" placeholder="Nombre de quien lo trajo" value="' + h(c.referredBy || '') + '">' +
       '<span class="aclist" id="clRefAc"></span></span>' +
       '<small class="muted" id="clRefHint">' + refHint(c) + '</small></label>' +
