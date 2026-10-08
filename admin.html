@@ -21,6 +21,17 @@
     font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; text-align: inherit; }
   th .sortth:hover, th .sortth.on { color: var(--negro); }
   th .sortth .ar { font-size: 9px; line-height: 1; }
+  /* referidos (pestaña Clientes) */
+  .selauto { width: auto; min-width: 170px; }
+  label.f > span.acwrap { display: block; position: relative; margin: 0; font-weight: 400; }
+  .aclist { display: none; position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 220px; overflow: auto;
+    background: var(--blanco); border: 1px solid var(--gris-3); border-radius: 8px; box-shadow: var(--sombra); }
+  .aclist.on { display: block; }
+  .aclist button { display: block; width: 100%; text-align: left; border: 0; background: transparent; font: inherit; padding: 7px 10px; cursor: pointer; }
+  .aclist button:hover, .aclist button.sel { background: var(--amarillo-claro); }
+  .linkref { border: 0; background: transparent; padding: 0; font: inherit; color: var(--negro); cursor: pointer;
+    text-decoration: underline; text-decoration-color: var(--amarillo); text-decoration-thickness: 2px; }
+  .refrow.on { background: var(--amarillo-claro); }
 </style>
 </head>
 <body>

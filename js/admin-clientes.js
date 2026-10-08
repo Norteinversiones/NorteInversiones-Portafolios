@@ -8,10 +8,13 @@
   'use strict';
   var N = window.NORTE, E = N.engine, db = N.db, CL = N.clientes;
   var SORT_KEY = 'norte.clientes.orden';
-  var CS = { list: null, q: '', alyc: '', edit: null, preview: null, orphans: [], soloRevisar: false, sort: null };
+  var CS = { list: null, q: '', alyc: '', ref: '', edit: null, preview: null, orphans: [], soloRevisar: false, sort: null, byId: {} };
+  var SIN_REF = '__sin__'; // valor del selector "Sin referido"
 
   function h(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function $(id) { return document.getElementById(id); }
+  // Texto comparable: sin acentos, sin mayúsculas. Se usa para buscar y para sugerir.
+  function norm(s) { return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim(); }
   function num(v) { var n = Number(String(v).replace(',', '.')); return isNaN(n) ? null : n; }
   function fmtArs0(v) { return '$' + E.fmtNum(v, 0); }
   var ALYC_LABEL = { IOL: 'IOL', COCOS: 'Cocos', BALANZ: 'Balanz' };
@@ -38,7 +41,8 @@
     name: { num: false, val: function (c) { return c.name || ''; } },
     greeting: { num: false, val: function (c) { return c.greeting || ''; } },
     cuentas: { num: false, val: function (c) { return cuentasDe(c).map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente; }).sort().join(' '); } },
-    capital: { num: true, val: function (c) { return CS.alyc ? capitalDe(c) : CL.capitalTotal(c); } }
+    capital: { num: true, val: function (c) { return CS.alyc ? capitalDe(c) : CL.capitalTotal(c); } },
+    referido: { num: false, val: function (c) { return c.referredBy || ''; } }
   };
   var SORT_DEF = { col: 'capital', dir: 'desc' }; // al abrir la pestaña: capital de mayor a menor
 
@@ -75,14 +79,52 @@
       ' title="Ordenar por ' + h(txt) + '">' + h(txt) + '<span class="ar">' + (on ? (CS.sort.dir === 'asc' ? '▲' : '▼') : '') + '</span></button></th>';
   }
 
-  // Filtro combinado: bróker + texto (nombre, saludo o número de comitente).
+  // ---------- referidos ----------
+  // `referredBy` es el nombre de quien lo refirió (texto libre) y `referredByClientId`
+  // el id del referidor cuando además es cliente. Para agrupar referidores se usa la
+  // misma clave que agrupa clientes (nombreNormalizado: tokens ordenados, sin acentos),
+  // así "Juan Pérez" y "PEREZ JUAN" cuentan como una sola persona.
+  function refKey(c) {
+    var t = String(c.referredBy || '').trim();
+    return t ? CL.nombreNormalizado(t) : '';
+  }
+  function indexar(list) { CS.byId = {}; list.forEach(function (c) { CS.byId[c.id] = c; }); }
+  // Referidores presentes en la base, con cuántos clientes trajo cada uno y su capital.
+  // Ordenados por capital de mayor a menor. El capital es el total del cliente: este
+  // resumen es de toda la base y no depende del bróker elegido ni del buscador.
+  function referidores(list) {
+    var map = {}, orden = [];
+    list.forEach(function (c) {
+      var k = refKey(c); if (!k) return;
+      if (!map[k]) { map[k] = { key: k, label: String(c.referredBy).trim(), clientId: '', n: 0, capital: 0 }; orden.push(k); }
+      var r = map[k];
+      r.n++; r.capital += CL.capitalTotal(c);
+      // Si alguno de los referidos lo tiene vinculado, mostramos el nombre de su ficha.
+      if (!r.clientId && c.referredByClientId && CS.byId[c.referredByClientId]) {
+        r.clientId = c.referredByClientId; r.label = CS.byId[c.referredByClientId].name || r.label;
+      }
+    });
+    return orden.map(function (k) { return map[k]; }).sort(function (a, b) { return (b.capital - a.capital) || txtCmp(a.label, b.label); });
+  }
+  // Celda "Referido" de la lista. Si está vinculado a un cliente, es un botón que abre
+  // su ficha; si el vínculo quedó colgado (lo borraron o lo unieron), cae a texto.
+  function refCelda(c) {
+    var t = String(c.referredBy || '').trim();
+    if (!t) return '<span class="muted">—</span>';
+    var o = c.referredByClientId ? CS.byId[c.referredByClientId] : null;
+    return o ? '<button type="button" class="linkref" data-ref="' + h(o.id) + '" title="Abrir la ficha de ' + h(o.name) + '">' + h(o.name) + '</button>'
+      : '<small>' + h(t) + '</small>';
+  }
+
+  // Filtro combinado: bróker + referidor + texto (nombre, saludo, referido o comitente).
   function filtrar(list) {
-    var q = CS.q.trim().toLowerCase();
+    var q = norm(CS.q);
     return list.filter(function (c) {
       if (CS.soloRevisar && !c.greetingReview) return false;
       if (CS.alyc && !(c.accounts || []).some(function (a) { return a.alyc === CS.alyc; })) return false;
+      if (CS.ref) { var k = refKey(c); if (CS.ref === SIN_REF ? !!k : k !== CS.ref) return false; }
       if (!q) return true;
-      return (c.name || '').toLowerCase().indexOf(q) >= 0 || (c.greeting || '').toLowerCase().indexOf(q) >= 0 ||
+      return norm(c.name).indexOf(q) >= 0 || norm(c.greeting).indexOf(q) >= 0 || norm(c.referredBy).indexOf(q) >= 0 ||
         (c.accounts || []).some(function (a) { return String(a.comitente).indexOf(q) >= 0; });
     });
   }
@@ -100,16 +142,47 @@
       alycsDisponibles(list).map(function (a) { return btn(a, alycLabel(a), porAlyc[a] || 0); }).join('') + '</div>';
   }
 
+  // Selector de referidor. Se dibuja una vez por render (queda fuera de #clLista),
+  // así que al elegir uno sólo se repinta la lista.
+  function refSelectHtml(list) {
+    var sin = list.filter(function (c) { return !refKey(c); }).length;
+    return '<select id="clRef" class="selauto" title="Filtrar por quién lo refirió">' +
+      '<option value=""' + (CS.ref ? '' : ' selected') + '>Todos</option>' +
+      '<option value="' + SIN_REF + '"' + (CS.ref === SIN_REF ? ' selected' : '') + '>Sin referido (' + sin + ')</option>' +
+      referidores(list).map(function (r) {
+        return '<option value="' + h(r.key) + '"' + (CS.ref === r.key ? ' selected' : '') + '>' + h(r.label) + ' (' + r.n + ')</option>';
+      }).join('') + '</select>';
+  }
+
+  // Tarjeta "Referidos": un renglón por referidor, de mayor a menor capital.
+  function resumenRefHtml(list) {
+    var refs = referidores(list);
+    if (!refs.length) return '';
+    var tot = refs.reduce(function (s, r) { return s + r.capital; }, 0), cli = refs.reduce(function (s, r) { return s + r.n; }, 0);
+    return '<div class="card" id="clRefResumen"><div class="row between"><h2>Referidos</h2>' +
+      '<button class="btn sm sec' + (CS.ref ? '' : ' hidden') + '" data-act="refall">Ver todos los clientes</button></div>' +
+      '<p class="sub">Quién trajo a cada cliente. Tocá un referidor para filtrar la lista de arriba.</p>' +
+      '<div class="tablewrap"><table><thead><tr><th>Referidor</th><th class="num">Clientes</th><th class="num">Capital</th></tr></thead><tbody>' +
+      refs.map(function (r) {
+        return '<tr class="refrow' + (CS.ref === r.key ? ' on' : '') + '" data-refkey="' + h(r.key) + '" style="cursor:pointer">' +
+          '<td><b>' + h(r.label) + '</b>' + (r.clientId ? ' <span class="tag">cliente</span>' : '') + '</td>' +
+          '<td class="num">' + r.n + '</td><td class="num">' + fmtArs0(r.capital) + '</td></tr>';
+      }).join('') +
+      '<tr class="total"><td>' + refs.length + (refs.length === 1 ? ' referidor' : ' referidores') + '</td><td class="num">' + cli + '</td><td class="num">' + fmtArs0(tot) + '</td></tr>' +
+      '</tbody></table></div></div>';
+  }
+
   // Contenido de #clLista (tabla + pie). Al buscar o filtrar se repinta sólo esto:
   // si se volviera a dibujar toda la pestaña, el input se recrearía en cada tecla
   // y el cursor se perdería.
   function listaHtml(list) {
     if (!list.length) return '<p class="muted">Todavía no hay clientes. Subí la planilla en el cuadro de la derecha.</p>';
+    indexar(list);
     var visibles = ordenar(filtrar(list)), cuentasVis = 0, capVis = 0;
     visibles.forEach(function (c) { cuentasVis += cuentasDe(c).length; capVis += capitalDe(c); });
     if (!visibles.length) return '<p class="muted">Ningún cliente coincide con la búsqueda' + (CS.alyc ? ' en ' + h(alycLabel(CS.alyc)) : '') + '. <button class="btn sm sec" data-act="limpiar">Ver todos</button></p>';
     return '<table><thead><tr>' + thSort('name', 'Cliente') + thSort('greeting', 'Saludo') + thSort('cuentas', 'Cuentas') +
-      thSort('capital', 'Capital' + (CS.alyc ? ' ' + alycLabel(CS.alyc) : ''), 'num') + '<th></th></tr></thead><tbody>' +
+      thSort('capital', 'Capital' + (CS.alyc ? ' ' + alycLabel(CS.alyc) : ''), 'num') + thSort('referido', 'Referido') + '<th></th></tr></thead><tbody>' +
       visibles.slice(0, 400).map(function (c) {
         return '<tr data-id="' + h(c.id) + '" style="cursor:pointer"><td><b>' + h(c.name) + '</b>' + (c.type === 'PJ' ? ' <span class="tag">PJ</span>' : '') + (c.isActive === false ? ' <span class="tag bad">inactivo</span>' : '') + (c.cotitulares && c.cotitulares.length ? '<br><small>y/o ' + h(c.cotitulares.join(', ')) + '</small>' : '') + '</td>' +
           '<td>' + h(c.greeting) + '</td>' +
@@ -117,8 +190,9 @@
             var t = h(alycLabel(a.alyc)) + ' ' + h(a.comitente);
             return CS.alyc && a.alyc !== CS.alyc ? '<span class="muted">' + t + '</span>' : t;
           }).join('<br>') + '</small></td>' +
-          '<td class="num">' + fmtArs0(CS.alyc ? capitalDe(c) : CL.capitalTotal(c)) + '</td><td>' + (CS.edit && CS.edit.id === c.id ? '▾' : '›') + '</td></tr>' +
-          (CS.edit && CS.edit.id === c.id ? '<tr class="editrow"><td colspan="5"><div class="card flat" id="clForm">' + formHtml(CS.edit) + '</div></td></tr>' : '');
+          '<td class="num">' + fmtArs0(CS.alyc ? capitalDe(c) : CL.capitalTotal(c)) + '</td>' +
+          '<td>' + refCelda(c) + '</td><td>' + (CS.edit && CS.edit.id === c.id ? '▾' : '›') + '</td></tr>' +
+          (CS.edit && CS.edit.id === c.id ? '<tr class="editrow"><td colspan="6"><div class="card flat" id="clForm">' + formHtml(CS.edit) + '</div></td></tr>' : '');
       }).join('') + '</tbody></table>' +
       '<p class="muted">' + visibles.length + (visibles.length === 1 ? ' cliente · ' : ' clientes · ') + cuentasVis + ' cuentas' + (CS.alyc ? ' en ' + h(alycLabel(CS.alyc)) : '') + ' · ' + fmtArs0(capVis) +
       (visibles.length > 400 ? ' · se muestran las primeras 400' : '') + '</p>';
@@ -130,6 +204,7 @@
     sec.innerHTML = '<p class="muted">Cargando clientes…</p>';
     if (!CS.list) { CS.list = await db.listClients(); CS.orphans = await db.listOrphanAccounts(); }
     var list = CS.list;
+    indexar(list);
 
     // ---- totales ----
     var alycs = alycsDisponibles(list), tot = {}, cnt = {}, totAll = 0, cuentas = 0;
@@ -138,10 +213,12 @@
     var html = '<div class="card"><div class="row between"><h2>Clientes</h2><div class="row"><span class="tag ok">' + list.length + ' clientes</span><span class="tag">' + cuentas + ' cuentas</span>' + '</div></div>' +
       '<div class="kpis mb">' + alycs.map(function (a) { return '<div class="kpi"><div class="l">Capital ' + h(alycLabel(a)) + '</div><div class="v">' + fmtArs0(tot[a] || 0) + '</div><small class="muted">' + (cnt[a] || 0) + ' cuentas</small></div>'; }).join('') +
       '<div class="kpi"><div class="l">Capital total</div><div class="v">' + fmtArs0(totAll) + '</div><small class="muted">' + cuentas + ' cuentas · ' + list.length + ' clientes</small></div></div>' +
-      '<div class="row"><input type="search" id="clQ" class="grow" placeholder="Buscar por nombre, saludo o comitente" value="' + h(CS.q) + '">' +
+      '<div class="row"><input type="search" id="clQ" class="grow" placeholder="Buscar por nombre, saludo, referido o comitente" value="' + h(CS.q) + '">' +
       '<button class="btn sm" data-act="new">+ Nuevo cliente</button></div>' +
-      '<div class="row mt"><span class="muted">Bróker</span>' + filtrosHtml(list) + '</div>' +
-      '<div class="tablewrap mt" id="clLista">' + listaHtml(list) + '</div></div>';
+      '<div class="row mt"><span class="muted">Bróker</span>' + filtrosHtml(list) +
+      '<span class="muted">Referido</span>' + refSelectHtml(list) + '</div>' +
+      '<div class="tablewrap mt" id="clLista">' + listaHtml(list) + '</div></div>' +
+      resumenRefHtml(list);
 
     // ---- ficha / importación ----
     html += '<div class="grid2">';
@@ -175,9 +252,19 @@
       bindFilas();
       if (CS.edit && CS.edit.id) bindForm(sec, ctx); // la ficha abierta vive dentro de la tabla
     }
+    // Elegir un referidor: repinta la lista y deja el selector y el resumen en sintonía.
+    function aplicarRef(val) {
+      CS.ref = val || '';
+      var s = $('clRef'); if (s) s.value = CS.ref;
+      sec.querySelectorAll('[data-refkey]').forEach(function (tr) { tr.classList.toggle('on', tr.dataset.refkey === CS.ref); });
+      var verTodos = sec.querySelector('[data-act=refall]');
+      if (verTodos) verTodos.classList.toggle('hidden', !CS.ref);
+      repintarLista();
+    }
     function bindFilas() {
       sec.querySelectorAll('tr[data-id]').forEach(function (tr) {
-        tr.onclick = function () {
+        tr.onclick = function (ev) {
+          if (ev.target.closest('[data-ref]')) return; // el referido abre otra ficha, no ésta
           var eraNuevo = CS.edit && !CS.edit.id; // la tarjeta de "nuevo cliente" está fuera de la lista
           if (CS.edit && CS.edit.id === tr.dataset.id) CS.edit = null;
           else CS.edit = JSON.parse(JSON.stringify(list.filter(function (c) { return c.id === tr.dataset.id; })[0]));
@@ -189,6 +276,7 @@
     bindFilas();
 
     $('clQ').oninput = function () { CS.q = this.value; repintarLista(); };
+    if ($('clRef')) $('clRef').onchange = function () { aplicarRef(this.value); };
 
     var pills = sec.querySelector('[data-role=alyc]');
     if (pills) pills.addEventListener('click', function (e) {
@@ -210,11 +298,29 @@
         else CS.sort = { col: col, dir: COLS[col].num ? 'desc' : 'asc' };
         guardarSort(); repintarLista(); return;
       }
+      // Un referido vinculado abre la ficha del referidor. Si los filtros lo dejan
+      // fuera de la lista, se limpian (la ficha vive dentro de la fila del cliente).
+      var lk = e.target.closest('[data-ref]');
+      if (lk) {
+        var o = CS.byId[lk.dataset.ref]; if (!o) return;
+        var eraNuevo = CS.edit && !CS.edit.id, visible = filtrar(list).some(function (x) { return x.id === o.id; });
+        if (!visible) { CS.q = ''; CS.alyc = ''; CS.ref = ''; }
+        CS.edit = JSON.parse(JSON.stringify(o));
+        var irAlForm = function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+        if (visible && !eraNuevo) { repintarLista(); irAlForm(); }
+        else N.renderClientes(ctx).then(irAlForm);
+        return;
+      }
+      // Referidor del resumen: filtra la lista por él (y al tocarlo otra vez, la libera).
+      var rk = e.target.closest('[data-refkey]');
+      if (rk) { aplicarRef(CS.ref === rk.dataset.refkey ? '' : rk.dataset.refkey); $('clLista').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
+
       var b = e.target.closest('[data-act]'); if (!b) return;
       var act = b.dataset.act;
       try {
         if (act === 'new') { CS.edit = { name: '', greeting: '', type: 'PH', accounts: [{ alyc: CS.alyc || 'IOL', comitente: '', capital: 0 }], isActive: true }; N.renderClientes(ctx).then(function () { var f = $('clForm'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); }
-        else if (act === 'limpiar') { CS.q = ''; CS.alyc = ''; N.renderClientes(ctx); }
+        else if (act === 'limpiar') { CS.q = ''; CS.alyc = ''; CS.ref = ''; N.renderClientes(ctx); }
+        else if (act === 'refall') { aplicarRef(''); }
         else if (act === 'merge') {
           var keep = list.filter(function (c) { return c.id === b.dataset.keep; })[0], drop = list.filter(function (c) { return c.id === b.dataset.drop; })[0];
           if (!confirm('Unir "' + drop.name + '" dentro de "' + keep.name + '". Las cuentas pasan al primero. ¿Confirmás?')) return;
@@ -243,6 +349,10 @@
       '<label class="f"><span>Tipo</span><select data-c="type"><option value="PH"' + (c.type !== 'PJ' ? ' selected' : '') + '>Persona humana</option><option value="PJ"' + (c.type === 'PJ' ? ' selected' : '') + '>Persona jurídica</option></select></label></div>' +
       '<div class="row">' +
       '<label class="check"><input type="checkbox" data-c="isActive"' + (c.isActive !== false ? ' checked' : '') + '> Activo (puede entrar a la app)</label></div>' +
+      '<label class="f"><span>Referido por (opcional · dato interno)</span>' +
+      '<span class="acwrap"><input type="text" data-c="referredBy" id="clRefIn" autocomplete="off" placeholder="Nombre de quien lo trajo" value="' + h(c.referredBy || '') + '">' +
+      '<span class="aclist" id="clRefAc"></span></span>' +
+      '<small class="muted" id="clRefHint">' + refHint(c) + '</small></label>' +
       (c.cotitulares && c.cotitulares.length ? '<p class="muted">Cotitulares: ' + h(c.cotitulares.join(', ')) + '</p>' : '') +
       '<h3 class="mt">Cuentas comitente</h3><div class="tablewrap"><table><thead><tr><th>Bróker</th><th>Comitente</th><th>Capital (ARS)</th><th></th></tr></thead><tbody>' + acc + '</tbody></table></div>' +
       '<button class="btn sm sec" data-f="addacc">+ Agregar cuenta</button>' +
@@ -252,8 +362,65 @@
       '<label class="f"><span>Notas internas</span><textarea data-c="notes">' + h(c.notes || '') + '</textarea></label>' +
       '<div class="row"><button class="btn" data-f="save">Guardar</button><button class="btn sec" data-f="cancel">Cerrar</button></div>';
   }
+  function refHint(c) {
+    var t = String(c.referredBy || '').trim(), o = c.referredByClientId ? CS.byId[c.referredByClientId] : null;
+    if (o) return 'Vinculado a la ficha de <b>' + h(o.name) + '</b>: en la lista se puede tocar para abrirla.';
+    if (t) return 'Se guarda como texto: no hay ningún cliente con ese nombre.';
+    return 'Mientras escribís aparecen los clientes que coinciden. También podés anotar a alguien que no es cliente.';
+  }
+
+  // Autocompletado del campo "Referido por": sugiere clientes mientras se escribe
+  // (sin acentos ni mayúsculas) y nunca se ofrece el cliente que estamos editando.
+  function bindAutocompletar(inp, box, hint) {
+    var sel = -1, opts = [];
+    function candidatos() {
+      var qn = norm(inp.value), propio = CL.nombreNormalizado(CS.edit.name || '');
+      return (CS.list || []).filter(function (x) {
+        if (CS.edit.id ? x.id === CS.edit.id : (propio && x.nameNormalized === propio)) return false;
+        return !qn || norm(x.name).indexOf(qn) >= 0;
+      }).slice(0, 8);
+    }
+    function marcar() { box.querySelectorAll('[data-pick]').forEach(function (b, i) { b.classList.toggle('sel', i === sel); }); }
+    function cerrar() { box.classList.remove('on'); box.innerHTML = ''; sel = -1; }
+    function pintar() {
+      opts = candidatos();
+      if (!opts.length) return cerrar();
+      box.innerHTML = opts.map(function (x) { return '<button type="button" data-pick="' + h(x.id) + '">' + h(x.name) + '</button>'; }).join('');
+      box.classList.add('on'); marcar();
+    }
+    function elegir(x) {
+      if (!x) return;
+      inp.value = x.name; CS.edit.referredBy = x.name; CS.edit.referredByClientId = x.id;
+      if (hint) hint.innerHTML = refHint(CS.edit);
+      cerrar();
+    }
+    inp.oninput = function () {
+      CS.edit.referredBy = inp.value;
+      // Si el texto dejó de coincidir con el cliente vinculado, se corta el vínculo.
+      var o = CS.edit.referredByClientId ? CS.byId[CS.edit.referredByClientId] : null;
+      if (o && norm(o.name) !== norm(inp.value)) CS.edit.referredByClientId = '';
+      sel = -1;
+      if (inp.value.trim()) pintar(); else cerrar(); // con el campo vacío no se sugiere nada
+      if (hint) hint.innerHTML = refHint(CS.edit);
+    };
+    inp.onblur = function () { setTimeout(cerrar, 150); }; // da tiempo al clic de la sugerencia
+    inp.onkeydown = function (e) {
+      if (e.key === 'Escape') return cerrar();
+      if (e.key === 'ArrowDown' && !box.classList.contains('on')) { e.preventDefault(); return pintar(); }
+      if (!box.classList.contains('on')) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, opts.length - 1); marcar(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, -1); marcar(); }
+      else if (e.key === 'Enter' && sel >= 0) { e.preventDefault(); elegir(opts[sel]); }
+    };
+    box.onmousedown = function (e) { // mousedown para que el clic gane al blur del input
+      var b = e.target.closest('[data-pick]'); if (!b) return;
+      e.preventDefault(); elegir(CS.byId[b.dataset.pick]);
+    };
+  }
+
   function bindForm(sec, ctx) {
     var form = $('clForm'); if (!form || !CS.edit) return;
+    if ($('clRefIn')) bindAutocompletar($('clRefIn'), $('clRefAc'), $('clRefHint'));
     form.addEventListener('input', function (e) {
       var t = e.target, c = CS.edit;
       if (t.dataset.c) { c[t.dataset.c] = t.type === 'checkbox' ? t.checked : t.value; }
@@ -271,6 +438,18 @@
           if (!c.accounts.some(function (a) { return String(a.comitente).replace(/\D/g, ''); })) return ctx.toast('Cargá al menos una cuenta comitente', true);
           if (!c.greeting.trim()) c.greeting = CL.saludoSugerido(c.name, c.accounts[0].alyc, c.type).saludo;
           c.nameNormalized = CL.nombreNormalizado(c.name);
+          // Referido: nadie puede ser referido de sí mismo. Si el texto escrito a mano
+          // coincide con un cliente, se vincula; si no, queda sólo el texto.
+          c.referredBy = String(c.referredBy || '').trim();
+          if (!c.referredBy) c.referredByClientId = '';
+          else {
+            var rk = CL.nombreNormalizado(c.referredBy);
+            if (rk === c.nameNormalized) return ctx.toast('Un cliente no puede ser referido de sí mismo', true);
+            if (!c.referredByClientId || c.referredByClientId === c.id) {
+              var m = (CS.list || []).filter(function (x) { return x.id !== c.id && x.nameNormalized === rk; });
+              c.referredByClientId = m.length === 1 ? m[0].id : '';
+            }
+          }
           ctx.busy(true); await db.saveClient(c); CS.list = null; CS.edit = null; ctx.busy(false); N.renderClientes(ctx); ctx.toast('Cliente guardado');
         }
         else if (f === 'delete') {

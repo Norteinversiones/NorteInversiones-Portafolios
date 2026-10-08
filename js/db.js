@@ -230,8 +230,10 @@
 
     // ---------- clientes (gestor) ----------
     // clients/{id}: name, nameNormalized, greeting, greetingReview, type, accounts[{alyc, comitente, capital}],
-    //               cotitulares[], dni, phone, email, notes, isActive
+    //               cotitulares[], dni, phone, email, notes, isActive,
+    //               referredBy (nombre de quien lo refirió), referredByClientId (si ese referidor es cliente)
     // Cada cuenta se refleja en authorized_accounts/{ALYC_COMITENTE} (índice de login).
+    // El referido es dato interno: NO se copia a authorized_accounts, así la app de clientes no lo ve.
     listClients: async function () {
       return docs(await db.collection('clients').get()).sort(function (a, b) { return (a.name || '').localeCompare(b.name || '', 'es'); });
     },
@@ -247,6 +249,10 @@
         name: (c.name || '').trim(), nameNormalized: c.nameNormalized || N.clientes.nombreNormalizado(c.name), greeting: (c.greeting || '').trim(),
         greetingReview: !!c.greetingReview, type: c.type === 'PJ' ? 'PJ' : 'PH', accounts: accounts, cotitulares: c.cotitulares || [],
         dni: c.dni || '', phone: c.phone || '', email: c.email || '', notes: c.notes || '', isActive: c.isActive !== false,
+        // Referido: si quien guarda no trae el campo, `clean` lo saca y el merge deja
+        // intacto el que ya estuviera cargado (no se puede borrar sin querer).
+        referredBy: c.referredBy === undefined ? undefined : String(c.referredBy || '').trim(),
+        referredByClientId: c.referredByClientId === undefined ? undefined : (c.referredByClientId || ''),
         createdAt: c.id ? undefined : ts(), updatedAt: ts()
       }), { merge: true });
       accounts.forEach(function (a) {
