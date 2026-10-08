@@ -7,7 +7,8 @@
 (function () {
   'use strict';
   var N = window.NORTE, E = N.engine, db = N.db, CL = N.clientes;
-  var CS = { list: null, q: '', alyc: '', edit: null, preview: null, orphans: [], soloRevisar: false };
+  var SORT_KEY = 'norte.clientes.orden';
+  var CS = { list: null, q: '', alyc: '', edit: null, preview: null, orphans: [], soloRevisar: false, sort: null };
 
   function h(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function $(id) { return document.getElementById(id); }
@@ -27,6 +28,52 @@
   }
   function cuentasDe(c) { return (c.accounts || []).filter(function (a) { return !CS.alyc || a.alyc === CS.alyc; }); }
   function capitalDe(c) { return cuentasDe(c).reduce(function (s, a) { return s + (Number(a.capital) || 0); }, 0); }
+
+  // ---------- orden de la lista ----------
+  // Una entrada por columna clickeable: `num` decide el tipo de comparación y el
+  // sentido del primer clic (los números arrancan de mayor a menor), `val` saca el
+  // valor a comparar. Un valor vacío (texto en blanco, capital 0 o sin cargar) va
+  // siempre al final, en cualquier dirección.
+  var COLS = {
+    name: { num: false, val: function (c) { return c.name || ''; } },
+    greeting: { num: false, val: function (c) { return c.greeting || ''; } },
+    cuentas: { num: false, val: function (c) { return cuentasDe(c).map(function (a) { return alycLabel(a.alyc) + ' ' + a.comitente; }).sort().join(' '); } },
+    capital: { num: true, val: function (c) { return CS.alyc ? capitalDe(c) : CL.capitalTotal(c); } }
+  };
+  var SORT_DEF = { col: 'capital', dir: 'desc' }; // al abrir la pestaña: capital de mayor a menor
+
+  function cargarSort() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SORT_KEY) || 'null');
+      if (s && COLS[s.col]) return { col: s.col, dir: s.dir === 'asc' ? 'asc' : 'desc' };
+    } catch (e) { }
+    return { col: SORT_DEF.col, dir: SORT_DEF.dir };
+  }
+  function guardarSort() { try { localStorage.setItem(SORT_KEY, JSON.stringify(CS.sort)); } catch (e) { } }
+  function txtCmp(a, b) { return String(a).localeCompare(String(b), 'es', { sensitivity: 'base', numeric: true }); }
+
+  function ordenar(list) {
+    var def = COLS[CS.sort.col] || COLS[SORT_DEF.col], dir = CS.sort.dir === 'asc' ? 1 : -1;
+    // Se calcula el valor una vez por cliente (no dentro del comparador).
+    return list.map(function (c) {
+      var v = def.val(c);
+      return { c: c, v: v, vacio: def.num ? !Number(v) : !String(v).trim() };
+    }).sort(function (x, y) {
+      if (x.vacio !== y.vacio) return x.vacio ? 1 : -1;
+      if (!x.vacio) {
+        var r = def.num ? (Number(x.v) - Number(y.v)) : txtCmp(x.v, y.v);
+        if (r) return r * dir;
+      }
+      return txtCmp(x.c.name || '', y.c.name || ''); // desempate estable por nombre
+    }).map(function (o) { return o.c; });
+  }
+
+  // Encabezado clickeable con la flechita de la columna activa.
+  function thSort(col, txt, cls) {
+    var on = CS.sort.col === col;
+    return '<th' + (cls ? ' class="' + cls + '"' : '') + '><button type="button" class="sortth' + (on ? ' on' : '') + '" data-sort="' + col + '"' +
+      ' title="Ordenar por ' + h(txt) + '">' + h(txt) + '<span class="ar">' + (on ? (CS.sort.dir === 'asc' ? '▲' : '▼') : '') + '</span></button></th>';
+  }
 
   // Filtro combinado: bróker + texto (nombre, saludo o número de comitente).
   function filtrar(list) {
@@ -58,10 +105,11 @@
   // y el cursor se perdería.
   function listaHtml(list) {
     if (!list.length) return '<p class="muted">Todavía no hay clientes. Subí la planilla en el cuadro de la derecha.</p>';
-    var visibles = filtrar(list), cuentasVis = 0, capVis = 0;
+    var visibles = ordenar(filtrar(list)), cuentasVis = 0, capVis = 0;
     visibles.forEach(function (c) { cuentasVis += cuentasDe(c).length; capVis += capitalDe(c); });
     if (!visibles.length) return '<p class="muted">Ningún cliente coincide con la búsqueda' + (CS.alyc ? ' en ' + h(alycLabel(CS.alyc)) : '') + '. <button class="btn sm sec" data-act="limpiar">Ver todos</button></p>';
-    return '<table><thead><tr><th>Cliente</th><th>Saludo</th><th>Cuentas</th><th class="num">Capital' + (CS.alyc ? ' ' + h(alycLabel(CS.alyc)) : '') + '</th><th></th></tr></thead><tbody>' +
+    return '<table><thead><tr>' + thSort('name', 'Cliente') + thSort('greeting', 'Saludo') + thSort('cuentas', 'Cuentas') +
+      thSort('capital', 'Capital' + (CS.alyc ? ' ' + alycLabel(CS.alyc) : ''), 'num') + '<th></th></tr></thead><tbody>' +
       visibles.slice(0, 400).map(function (c) {
         return '<tr data-id="' + h(c.id) + '" style="cursor:pointer"><td><b>' + h(c.name) + '</b>' + (c.type === 'PJ' ? ' <span class="tag">PJ</span>' : '') + (c.isActive === false ? ' <span class="tag bad">inactivo</span>' : '') + (c.cotitulares && c.cotitulares.length ? '<br><small>y/o ' + h(c.cotitulares.join(', ')) + '</small>' : '') + '</td>' +
           '<td>' + h(c.greeting) + '</td>' +
@@ -78,6 +126,7 @@
 
   N.renderClientes = async function (ctx) {
     var sec = ctx.freshSection('tab-clientes'), toast = ctx.toast, busy = ctx.busy;
+    if (!CS.sort) CS.sort = cargarSort(); // último orden elegido, o capital de mayor a menor
     sec.innerHTML = '<p class="muted">Cargando clientes…</p>';
     if (!CS.list) { CS.list = await db.listClients(); CS.orphans = await db.listOrphanAccounts(); }
     var list = CS.list;
@@ -153,6 +202,14 @@
     bindForm(sec, ctx);
 
     sec.addEventListener('click', async function (e) {
+      // Encabezados de la tabla: primer clic ordena por esa columna, el segundo invierte.
+      var th = e.target.closest('[data-sort]');
+      if (th) {
+        var col = th.dataset.sort; if (!COLS[col]) return;
+        if (CS.sort.col === col) CS.sort.dir = CS.sort.dir === 'asc' ? 'desc' : 'asc';
+        else CS.sort = { col: col, dir: COLS[col].num ? 'desc' : 'asc' };
+        guardarSort(); repintarLista(); return;
+      }
       var b = e.target.closest('[data-act]'); if (!b) return;
       var act = b.dataset.act;
       try {
