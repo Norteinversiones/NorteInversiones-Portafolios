@@ -4,7 +4,7 @@
    actualiza en segundo plano; los datos (Firestore) nunca pasan por acá.
    Cambiar VERSION en cada deploy para renovar la caché.
    ============================================================ */
-var VERSION = 'norte-v202609222248';
+var VERSION = 'norte-v202610072315';
 var SHELL = [
   './', './index.html', './manifest.webmanifest',
   './css/app.css', './css/client.css',
