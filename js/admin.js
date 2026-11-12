@@ -116,7 +116,7 @@
     var b = e.target.closest('button'); if (!b) return;
     TAB = b.dataset.tab;
     Array.prototype.forEach.call($('tabs').children, function (x) { x.classList.toggle('on', x === b); });
-    ['rotacion', 'historico', 'catalogo', 'clientes', 'comitentes', 'fichas', 'ingesta'].forEach(function (t) { var el = $('tab-' + t); if (el) el.classList.toggle('hidden', t !== TAB); });
+    ['rotacion', 'historico', 'catalogo', 'clientes', 'comitentes', 'fichas', 'avisos', 'ingesta'].forEach(function (t) { var el = $('tab-' + t); if (el) el.classList.toggle('hidden', t !== TAB); });
     render();
   });
   function render() {
@@ -126,6 +126,7 @@
     else if (TAB === 'clientes') N.renderClientes({ freshSection: freshSection, toast: toast, busy: busy, fmtTs: fmtTs }).catch(function (e) { console.error(e); toast('Error: ' + e.message, true); });
     else if (TAB === 'comitentes') renderComitentes();
     else if (TAB === 'fichas') renderFichas();
+    else if (TAB === 'avisos') renderAvisos().catch(function (e) { console.error(e); toast('Error: ' + e.message, true); });
     else if (TAB === 'ingesta') renderIngesta();
   }
   function pillsHtml() {
@@ -691,6 +692,64 @@
   // ============================================================
   // INGESTA (salud + cierre manual)
   // ============================================================
+  // ============================================================
+  // AVISOS (notificaciones push a los clientes)
+  //   config/push: lo que se edita acá · jobs/push: estado del robot · push_tokens: dispositivos suscriptos
+  // ============================================================
+  var FERIADOS_2026 = ['2026-11-23', '2026-12-08', '2026-12-25', '2026-12-31']; // sin negociación según el calendario de BYMA
+  async function renderAvisos() {
+    var sec = $('tab-avisos');
+    sec.innerHTML = '<p class="muted">Cargando…</p>';
+    var r = await Promise.all([db.getPushConfig(), db.getPushState(), db.listPushTokens()]);
+    var cfg = r[0] || {}, st = r[1] || {}, toks = r[2], en = cfg.enabled || {};
+    var nuevo = !r[0];
+    var fer = (cfg.holidays || (nuevo ? FERIADOS_2026 : [])).slice().sort();
+    var cuentas = {}; toks.forEach(function (t) { cuentas[t.accountId] = 1; });
+    var no = function (k) { return toks.filter(function (t) { return t.prefs && t.prefs[k] === false; }).length; };
+    var chk = function (k, txt) { return '<label class="check" style="display:flex;margin:8px 0"><input type="checkbox" data-en="' + k + '"' + (en[k] !== false ? ' checked' : '') + '> ' + txt + '</label>'; };
+    var html = '<div class="grid2"><div class="card"><h2>Avisos a los clientes</h2><div class="sub">Notificaciones en el celular. Las manda el robot de GitHub; pueden salir con algunos minutos de demora.</div>' +
+      (cfg.vapidKey ? '' : '<div class="alert warn"><b>Falta un paso para encenderlos:</b> pegá abajo la clave pública de notificaciones de Firebase (Configuración del proyecto → Cloud Messaging → Certificados push web → Generar par de claves).</div>') +
+      chk('open', 'Apertura del mercado') + chk('close', 'Cierre del mercado (rendimiento del día de cada portafolio + dólar MEP y CCL)') + chk('rotation', 'Rotaciones (un aviso por portafolio al publicar una rotación nueva; las correcciones no avisan)') +
+      '<div class="row mt"><label class="f"><span>Hora de apertura</span><input type="text" id="avOpen" class="w-s" style="width:90px" value="' + h(cfg.openTime || '10:30') + '"></label>' +
+      '<label class="f"><span>Hora de cierre</span><input type="text" id="avClose" style="width:90px" value="' + h(cfg.closeTime || '18:00') + '"></label></div>' +
+      '<label class="f"><span>Feriados bursátiles (días sin rueda: no se avisa). Uno por línea, formato AAAA-MM-DD</span><textarea id="avFer" class="csvbox">' + h(fer.join('\n')) + '</textarea></label>' +
+      '<p class="legal">Fuente: <a href="https://byma.com.ar/mercado/calendario-bursatil" target="_blank" rel="noopener">calendario bursátil de BYMA</a>. Hay que cargar los del año siguiente cuando BYMA los publique. Sábados y domingos ya se saltean solos.</p>' +
+      '<label class="f"><span>Clave pública de notificaciones (VAPID)</span><input type="text" id="avKey" value="' + h(cfg.vapidKey || '') + '" placeholder="Empieza con B… (88 caracteres aprox.)"></label>' +
+      '<div class="row"><button class="btn" id="avSave">Guardar</button></div></div>';
+    html += '<div><div class="card"><h2>Estado</h2><table class="health"><tbody>' +
+      '<tr><td>Dispositivos suscriptos</td><td><b>' + toks.length + '</b> · ' + Object.keys(cuentas).length + ' cuentas</td></tr>' +
+      '<tr><td>Desactivaron apertura / cierre</td><td>' + no('open') + ' / ' + no('close') + '</td></tr>' +
+      '<tr><td>Última pasada del robot</td><td>' + (st.lastRun ? fmtTs(st.lastRun) : 'todavía no corrió') + '</td></tr>' +
+      '<tr><td>Último aviso de apertura</td><td>' + (st.lastOpen ? E.fmtDate(st.lastOpen) : '—') + '</td></tr>' +
+      '<tr><td>Último aviso de cierre</td><td>' + (st.lastClose ? E.fmtDate(st.lastClose) : '—') + '</td></tr>' +
+      '<tr><td>Última rotación avisada</td><td>' + (st.rot ? S.portfolios.map(function (p) { return h(p.name) + ' ' + (st.rot[p.slug] ? E.fmtDate(st.rot[p.slug]) : '—'); }).join('<br>') : '—') + '</td></tr>' +
+      '</tbody></table></div>' +
+      '<div class="card"><h2>Enviar una prueba</h2><div class="sub">Manda un aviso de prueba solo a los dispositivos de una cuenta (por ejemplo la tuya). Sale en la próxima pasada del robot: hasta 10 minutos en horario de mercado, hasta 30 fuera de horario.</div>' +
+      '<div class="row"><select id="avTAlyc" class="selauto" style="min-width:110px">' + N.ALYCS.map(function (a) { return '<option>' + a + '</option>'; }).join('') + '</select>' +
+      '<input type="text" id="avTNum" inputmode="numeric" placeholder="N.° de comitente" style="width:170px"><button class="btn sec" id="avTest">Pedir prueba</button></div>' +
+      (st.lastTestResult ? '<p class="legal mt">Última prueba: ' + fmtTs(st.lastTestResult.at) + ' · ' + st.lastTestResult.destinatarios + ' dispositivos · ' + st.lastTestResult.enviados + ' enviados, ' + st.lastTestResult.fallidos + ' fallidos.</p>' : '') +
+      (cfg.testAt && cfg.testAt !== st.lastTestAt ? '<p class="legal mt">Hay una prueba pendiente de envío.</p>' : '') + '</div></div></div>';
+    sec.innerHTML = html;
+    $('avSave').onclick = async function () {
+      var hora = /^([01]?\d|2[0-3]):[0-5]\d$/;
+      var o = $('avOpen').value.trim(), c = $('avClose').value.trim();
+      if (!hora.test(o) || !hora.test(c)) return toast('Las horas van como 10:30', true);
+      var dias = $('avFer').value.split(/[\s,;]+/).filter(Boolean), mal = dias.filter(function (d) { return !E.isValidDate(d); });
+      if (mal.length) return toast('Fecha mal escrita: ' + mal[0] + ' (va AAAA-MM-DD)', true);
+      var enabled = {}; sec.querySelectorAll('[data-en]').forEach(function (x) { enabled[x.dataset.en] = x.checked; });
+      try { await db.savePushConfig({ enabled: enabled, openTime: o, closeTime: c, holidays: dias.sort(), vapidKey: $('avKey').value.trim() }); toast('Avisos guardados'); renderAvisos(); }
+      catch (e) { toast('Error: ' + e.message, true); }
+    };
+    $('avTest').onclick = async function () {
+      var n = $('avTNum').value.replace(/\D/g, '');
+      if (!n) return toast('Escribí el número de comitente', true);
+      var id = db.accountId($('avTAlyc').value, n);
+      if (!toks.some(function (t) { return t.accountId === id; })) return toast('Esa cuenta no tiene ningún dispositivo con avisos activados', true);
+      try { await db.savePushConfig({ testTo: id, testAt: new Date().toISOString() }); toast('Prueba pedida: sale en la próxima pasada del robot'); renderAvisos(); }
+      catch (e) { toast('Error: ' + e.message, true); }
+    };
+  }
+
   async function renderIngesta() {
     var sec = $('tab-ingesta');
     sec.innerHTML = '<p class="muted">Cargando…</p>';

@@ -1,0 +1,36 @@
+# Notificaciones push a los clientes · corre en los servidores de GitHub.
+# Avisa: apertura y cierre del mercado (días hábiles) y cada rotación publicada.
+# Horarios en UTC (Argentina = UTC-3). El script decide qué mandar y nunca repite un aviso,
+# así que no importa si GitHub lo corre con unos minutos de demora o más de una vez.
+name: Notificaciones
+
+on:
+  schedule:
+    - cron: '2-59/10 13-21 * * 1-5'   # cada 10 min de 10:02 a 18:52 ART, lunes a viernes (apertura, cierre, rotaciones)
+    - cron: '17,47 * * * *'           # cada 30 min el resto del tiempo (rotaciones publicadas fuera de horario)
+  workflow_dispatch:
+
+concurrency:
+  group: notificaciones
+  cancel-in-progress: false
+
+jobs:
+  avisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        working-directory: ingest
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Enviar avisos pendientes
+        working-directory: ingest
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node capture.js push

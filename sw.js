@@ -6,7 +6,7 @@
    Los datos (Firestore) nunca pasan por acá.
    Cambiar VERSION en cada deploy para renovar la caché.
    ============================================================ */
-var VERSION = 'norte-v202611120130';
+var VERSION = 'norte-v202611120230';
 var SHELL = [
   './', './index.html', './manifest.webmanifest',
   './css/app.css', './css/client.css',
@@ -43,4 +43,29 @@ self.addEventListener('fetch', function (e) {
       return caches.match(e.request).then(function (r) { return r || caches.match(e.request, { ignoreSearch: true }); });
     })
   );
+});
+
+// ---------- notificaciones push ----------
+// El robot manda mensajes de datos: { title, body, url, tag }. Acá se muestran.
+self.addEventListener('push', function (e) {
+  var p = {};
+  try { p = e.data ? e.data.json() : {}; } catch (x) { }
+  var d = p.data || p.notification || p;
+  var title = d.title || 'Norte Inversiones';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: d.body || '', tag: d.tag || 'norte', renotify: true,
+    icon: './assets/icon-192.png', badge: './assets/favicon-64.png',
+    data: { url: d.url || '' }
+  }));
+});
+// Al tocar el aviso: abre la app (o la trae al frente) en la pantalla que corresponde.
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  var destino = self.registration.scope + ((e.notification.data && e.notification.data.url) || '');
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (cs) {
+    for (var i = 0; i < cs.length; i++) {
+      if (cs[i].url.indexOf(self.registration.scope) === 0 && 'focus' in cs[i]) { if ('navigate' in cs[i]) cs[i].navigate(destino); return cs[i].focus(); }
+    }
+    return self.clients.openWindow(destino);
+  }));
 });

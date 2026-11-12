@@ -182,3 +182,14 @@ table.calc td small { color: var(--gris-2); font-weight: 400; }
 .holding .hc .cupon { white-space: nowrap; }
 .simresult .cupon { font-size: 13px; }
 .chg .cp.pos { color: var(--pos); }
+
+/* ---- avisos (notificaciones) ---- */
+.avisos { display: flex; justify-content: space-between; align-items: center; gap: 12px; text-decoration: none; color: var(--negro); background: var(--blanco); border: 1.5px solid var(--negro); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
+.avisos small { color: var(--gris-1); }
+.avisos > b { white-space: nowrap; background: var(--amarillo); padding: 6px 12px; border-radius: 999px; font-size: 13px; }
+.avisos.on { border: 1px solid var(--gris-3); font-size: 13px; padding: 9px 14px; }
+.avisos.on > b { background: transparent; padding: 0; font-weight: 600; }
+.swrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--gris-4); font-size: 15px; font-weight: 500; }
+.swrow:last-child { border-bottom: 0; }
+.swrow small { display: block; font-weight: 400; color: var(--gris-2); font-size: 12px; }
+.swrow input { width: 22px; height: 22px; flex: 0 0 auto; }

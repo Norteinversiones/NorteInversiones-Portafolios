@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const admin = require('firebase-admin');
 
-const MODE = process.argv[2] === 'live' ? 'live' : process.argv[2] === 'market' ? 'market' : 'eod';
+const MODE = ['live', 'market', 'push'].indexOf(process.argv[2]) >= 0 ? process.argv[2] : 'eod';
 const FORCE = process.argv.includes('--force');
 
 const D912 = 'https://data912.com/live/';
@@ -385,6 +385,157 @@ async function recalcularPortafolios(db) {
   }
 }
 
+// ============================================================
+// NOTIFICACIONES PUSH (modo "push")
+//   config/push   (lo edita el Panel): enabled{open,close,rotation}, openTime, closeTime,
+//                 holidays[], testTo, testAt
+//   push_tokens/{uid} (lo escribe la app del cliente): token, accountId, prefs{open,close,rot{slug}}
+//   jobs/push     (estado del robot): lastOpen, lastClose, rot{slug: effectiveFrom}, lastTestAt
+// Cada corrida es idempotente: un aviso sale una sola vez por día / por rotación.
+// ============================================================
+function horaART(d) {
+  d = d || new Date();
+  return new Date(d.getTime() - 3 * 3600 * 1000).toISOString().slice(11, 16);
+}
+function minutos(hhmm) { const p = String(hhmm || '').split(':'); return Number(p[0]) * 60 + Number(p[1] || 0); }
+function pctTxt(v) { return engine.fmtPct(v, 2); }
+function emojiRiesgo(r) { return r === 1 ? '🟢' : r === 3 ? '🔴' : '🟡'; }
+
+// Manda un aviso a una lista de dispositivos. Borra los tokens que ya no sirven.
+async function enviarPush(db, destinos, aviso) {
+  if (!destinos.length) return { enviados: 0, fallidos: 0 };
+  const data = { title: String(aviso.title), body: String(aviso.body), url: String(aviso.url || ''), tag: String(aviso.tag || 'norte') };
+  let ok = 0, mal = 0;
+  for (let i = 0; i < destinos.length; i += 500) {
+    const lote = destinos.slice(i, i + 500);
+    const res = await admin.messaging().sendEachForMulticast({
+      tokens: lote.map(function (d) { return d.token; }),
+      data: data,
+      webpush: { headers: { Urgency: 'high', TTL: String(aviso.ttl || 3600) } }
+    });
+    const borrar = db.batch(); let nb = 0;
+    res.responses.forEach(function (r, k) {
+      if (r.success) { ok++; return; }
+      mal++;
+      const code = r.error && r.error.code;
+      if (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token' || code === 'messaging/invalid-argument') {
+        borrar.delete(db.collection('push_tokens').doc(lote[k].id)); nb++;
+      } else log('push fallido:', code);
+    });
+    if (nb) await borrar.commit();
+  }
+  log('push "' + data.title + '":', ok, 'enviados ·', mal, 'fallidos');
+  return { enviados: ok, fallidos: mal };
+}
+
+// Rendimiento del día de cada portafolio: del último cierre anterior a hoy hasta el último precio.
+async function rendimientosDelDia(db, hoy) {
+  const desde = engine.addDays(hoy, -12);
+  const qsnap = await db.collection('quotes').where('date', '>=', desde).orderBy('date').get();
+  const quotes = qsnap.docs.filter(function (d) { return d.id !== 'live'; }).map(function (d) { return d.data(); })
+    .filter(function (q) { return q.date < hoy && q.isEod !== false && !q.noTrading; });
+  const liveDoc = await db.collection('quotes').doc('live').get();
+  const live = liveDoc.exists ? liveDoc.data() : null;
+  if (!live || live.date !== hoy || !quotes.length) return null;      // hoy no hay precios: no se informa
+  const prev = quotes[quotes.length - 1];
+  // Sin rueda (feriado no cargado): los precios de hoy son idénticos al último cierre.
+  const tks = Object.keys(live.prices || {});
+  if (tks.length && tks.every(function (t) { return Number(live.prices[t]) === Number((prev.prices || {})[t]); })) return null;
+  const isnap = await db.collection('instruments').get();
+  const pagos = engine.paymentsOf(isnap.docs.map(function (d) { return Object.assign({ ticker: d.id }, d.data()); }));
+  const book = engine.quoteBook(quotes, live, pagos);
+  const ports = await db.collection('portfolios').get();
+  const filas = [];
+  for (const pd of ports.docs) {
+    const p = pd.data(); if (!p.name) continue;
+    const vsnap = await pd.ref.collection('versions').where('status', '==', 'published').get();
+    const versions = vsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+    if (!versions.length) continue;
+    const sim = engine.simulate(versions, book, prev.date, { today: hoy });
+    if (!sim.segments.length) continue;
+    filas.push({ name: p.name, riskLevel: p.riskLevel, order: p.order || 0, ars: sim.accumulated.ars });
+  }
+  filas.sort(function (a, b) { return a.order - b.order; });
+  return { filas: filas, fx: live.fx || null };
+}
+
+async function correrPush(db) {
+  const cfgDoc = await db.collection('config').doc('push').get();
+  const cfg = cfgDoc.exists ? cfgDoc.data() : {};
+  const en = cfg.enabled || {};
+  const stRef = db.collection('jobs').doc('push');
+  const stDoc = await stRef.get();
+  const st = stDoc.exists ? stDoc.data() : {};
+  const hoy = fechaART(), ahora = minutos(horaART());
+  const tsnap = await db.collection('push_tokens').get();
+  const todos = tsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).filter(function (t) { return t.token; });
+  const quiere = function (t, clave) { return !(t.prefs && t.prefs[clave] === false); };
+  const out = { dispositivos: todos.length, enviados: [] }, cambios = {};
+  const habil = !esFinDeSemana(hoy) && (cfg.holidays || []).indexOf(hoy) < 0;
+  const abre = minutos(cfg.openTime || '10:30'), cierra = minutos(cfg.closeTime || '18:00');
+
+  // --- prueba pedida desde el Panel ---
+  if (cfg.testAt && cfg.testAt !== st.lastTestAt) {
+    const dest = todos.filter(function (t) { return !cfg.testTo || t.accountId === cfg.testTo; });
+    const r = await enviarPush(db, dest, { title: '✅ Prueba de avisos', body: 'Las notificaciones de Norte Inversiones funcionan en este dispositivo.', tag: 'prueba' });
+    cambios.lastTestAt = cfg.testAt; cambios.lastTestResult = Object.assign({ at: new Date().toISOString(), destinatarios: dest.length }, r);
+    out.enviados.push('prueba');
+  }
+
+  // --- apertura ---
+  if (en.open !== false && habil && st.lastOpen !== hoy && ahora >= abre && ahora <= abre + 90) {
+    await enviarPush(db, todos.filter(function (t) { return quiere(t, 'open'); }),
+      { title: '🔔 Abrió el mercado', body: 'Ya opera la rueda en BYMA. Entrá para ver cómo vienen los portafolios.', tag: 'apertura', ttl: 3600 });
+    cambios.lastOpen = hoy; out.enviados.push('apertura');
+  }
+
+  // --- cierre: rendimiento del día de cada portafolio + dólar ---
+  if (en.close !== false && habil && st.lastClose !== hoy && ahora >= cierra + 3 && ahora <= cierra + 240) {
+    try { await correrLive(db); await recalcularPortafolios(db); } catch (e) { log('no se pudo refrescar el intradía antes del cierre:', e.message); }
+    const dia = await rendimientosDelDia(db, hoy);
+    if (dia && dia.filas.length) {
+      const lineas = dia.filas.map(function (f) { return emojiRiesgo(f.riskLevel) + ' ' + f.name + ' ' + pctTxt(f.ars); });
+      if (dia.fx) lineas.push('💵 MEP ' + engine.fmtArs(dia.fx.mep, 0) + ' · CCL ' + engine.fmtArs(dia.fx.ccl, 0));
+      await enviarPush(db, todos.filter(function (t) { return quiere(t, 'close'); }),
+        { title: '🔔 Cierre del mercado · ' + engine.fmtDate(hoy).slice(0, 5), body: lineas.join('\n'), tag: 'cierre', ttl: 6 * 3600 });
+      out.enviados.push('cierre');
+    } else log('cierre: hoy no hubo precios nuevos (¿feriado sin cargar?), no se avisa');
+    cambios.lastClose = hoy;
+  }
+
+  // --- rotaciones: una notificación por portafolio cuando se publica una rotación nueva ---
+  if (en.rotation !== false) {
+    const rot = Object.assign({}, st.rot || {}); let tocado = false;
+    const ports = await db.collection('portfolios').get();
+    for (const pd of ports.docs) {
+      const p = pd.data(), slug = pd.id; if (!p.name) continue;
+      const vsnap = await pd.ref.collection('versions').where('status', '==', 'published').get();
+      const vs = vsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+        .filter(function (v) { return v.effectiveFrom && v.effectiveFrom <= hoy; })
+        .sort(function (a, b) { return a.effectiveFrom < b.effectiveFrom ? -1 : 1; });
+      if (!vs.length) continue;
+      const cur = vs[vs.length - 1], prev = vs.length > 1 ? vs[vs.length - 2] : null;
+      if (!rot[slug]) { rot[slug] = cur.effectiveFrom; tocado = true; continue; }   // primera vez: sólo se anota
+      if (cur.effectiveFrom <= rot[slug]) continue;                                 // misma fecha = corrección: no se avisa
+      const d = engine.diffHoldings(prev, cur), partes = [];
+      const lista = function (xs) { return xs.map(function (x) { return x.ticker; }).join(', '); };
+      if (d.in.length) partes.push('Entra: ' + lista(d.in));
+      if (d.out.length) partes.push('Sale: ' + lista(d.out));
+      if (d.up.length) partes.push('Sube: ' + lista(d.up));
+      if (d.down.length) partes.push('Baja: ' + lista(d.down));
+      await enviarPush(db, todos.filter(function (t) { return !(t.prefs && t.prefs.rot && t.prefs.rot[slug] === false); }),
+        { title: emojiRiesgo(p.riskLevel) + ' Nueva rotación · ' + p.name, body: partes.length ? partes.join('\n') : 'Se publicó una nueva composición. Entrá para verla.',
+          url: '#/p/' + slug + '/rotaciones', tag: 'rot-' + slug, ttl: 24 * 3600 });
+      rot[slug] = cur.effectiveFrom; tocado = true; out.enviados.push('rotación ' + slug);
+    }
+    if (tocado) cambios.rot = rot;
+  }
+
+  cambios.lastRun = new Date().toISOString(); cambios.devices = todos.length;
+  await stRef.set(cambios, { merge: true });
+  return out;
+}
+
 // ---------- main ----------
 (async function main() {
   const sa = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -398,12 +549,12 @@ async function recalcularPortafolios(db) {
   const t0 = Date.now();
   let resultado = null, error = null;
   try {
-    resultado = MODE === 'live' ? await correrLive(db) : MODE === 'market' ? await correrMarket(db) : await correrEod(db);
+    resultado = MODE === 'live' ? await correrLive(db) : MODE === 'market' ? await correrMarket(db) : MODE === 'push' ? await correrPush(db) : await correrEod(db);
   } catch (e) {
     error = e.message || String(e);
     log('ERROR:', error);
   }
-  if (!error && MODE !== 'market' && resultado && !resultado.skipped) await recalcularPortafolios(db);
+  if (!error && MODE !== 'market' && MODE !== 'push' && resultado && !resultado.skipped) await recalcularPortafolios(db);
   const registro = {
     at: admin.firestore.FieldValue.serverTimestamp(), ok: !error, error: error,
     ms: Date.now() - t0, result: resultado

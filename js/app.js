@@ -26,7 +26,7 @@
   var S = {
     session: null, moneda: 'ARS', portfolios: [], pmap: {}, live: null, lastEod: [], book: null,
     instruments: [], insMap: {}, education: [], versions: {}, monthly: {}, quotes: null, quotesFrom: null,
-    sim: {}, installEvt: null, loaded: false
+    sim: {}, installEvt: null, loaded: false, pushCfg: null, push: null
   };
 
   // ---------- utilidades ----------
@@ -142,6 +142,7 @@
     S.pays = E.paymentsOf(S.instruments); // cobros de cupón / amortización cargados en el catálogo
     S.live = r[1]; S.lastEod = r[2]; S.book = E.quoteBook(S.lastEod, S.live, S.pays);
     S.education = r[4]; S.loaded = true;
+    pushInit(); // en segundo plano: no frena la carga
   }
   async function ensureVersions(slug) { if (!S.versions[slug]) S.versions[slug] = await db.getVersions(slug, false); return S.versions[slug]; }
   async function ensureMonthly(slug) { if (!S.monthly[slug]) S.monthly[slug] = await db.getMonthlyReturns(slug); return S.monthly[slug]; }
@@ -163,6 +164,91 @@
     var sw = $('monedaSw');
     if (sw) sw.onclick = function (e) { var b = e.target.closest('button'); if (!b) return; S.moneda = b.dataset.m; try { localStorage.setItem(MONEDA_KEY, S.moneda); } catch (x) { } renderHeader(); route(); };
     $('bottomnav').classList.toggle('hidden', !S.session);
+  }
+
+  // ============================================================
+  // NOTIFICACIONES (avisos de apertura, cierre y rotaciones)
+  //   S.pushCfg = config/push (clave pública y horarios) · S.push = { token, prefs } si está suscripto.
+  // ============================================================
+  var PUSH_KEY = 'norte_push';
+  function pushDefaults() { var rot = {}; S.portfolios.forEach(function (p) { rot[p.slug] = true; }); return { open: true, close: true, rot: rot }; }
+  function pushSoportado() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && firebase.messaging; }
+  // Estado para mostrar: 'off' (sin configurar en el Panel), 'ios' (hay que instalar la app), 'nosoporta',
+  // 'bloqueado' (permiso denegado), 'inactivo' (se puede activar), 'activo'.
+  function pushEstado() {
+    if (!S.pushCfg || !S.pushCfg.vapidKey) return 'off';
+    if (isIos() && !isStandalone()) return 'ios';
+    if (!pushSoportado()) return 'nosoporta';
+    if (Notification.permission === 'denied') return 'bloqueado';
+    return S.push && Notification.permission === 'granted' ? 'activo' : 'inactivo';
+  }
+  async function pushToken() {
+    var reg = await navigator.serviceWorker.ready;
+    return firebase.app('cliente').messaging().getToken({ vapidKey: S.pushCfg.vapidKey, serviceWorkerRegistration: reg });
+  }
+  async function pushGuardar(prefs) {
+    var token = await pushToken();
+    if (!token) throw new Error('sin token');
+    S.push = { token: token, prefs: prefs };
+    await db.saveMyPush({ token: token, accountId: db.accountId(S.session.alyc, S.session.comitente), prefs: prefs });
+    try { localStorage.setItem(PUSH_KEY, '1'); } catch (e) { }
+  }
+  // Al abrir la app: lee los ajustes y, si este dispositivo ya estaba suscripto, renueva el registro.
+  async function pushInit() {
+    try {
+      S.pushCfg = await db.getPushConfig();
+      var marcado = false; try { marcado = localStorage.getItem(PUSH_KEY) === '1'; } catch (e) { }
+      if (S.pushCfg && S.pushCfg.vapidKey && pushSoportado() && Notification.permission === 'granted' && marcado && S.session) {
+        var mio = await db.getMyPush();
+        await pushGuardar(mio && mio.prefs ? mio.prefs : pushDefaults());
+      }
+    } catch (e) { console.warn('Avisos:', e.message || e); }
+    if (S.session && !location.hash.replace(/^#\/?/, '')) renderHome();
+  }
+  function avisosCardHtml() {
+    var e = pushEstado();
+    if (e === 'off' || e === 'nosoporta') return '';
+    if (e === 'activo') return '<a class="avisos on" href="#/avisos"><span>🔔 Avisos activados en este dispositivo</span><b>Configurar ›</b></a>';
+    return '<a class="avisos" href="#/avisos"><span>🔔 <b>Recibí avisos en tu celular</b><br><small>Apertura y cierre del mercado, y cada rotación de los portafolios.</small></span><b>Activar ›</b></a>';
+  }
+  function renderAvisos() {
+    var e = pushEstado(), cuerpo;
+    var hs = S.pushCfg ? (S.pushCfg.openTime || '10:30') + ' y ' + (S.pushCfg.closeTime || '18:00') : '';
+    if (e === 'off' || e === 'nosoporta') cuerpo = '<div class="card"><p>Este navegador no permite recibir avisos. Probá abrir la app desde Chrome en tu celular.</p></div>';
+    else if (e === 'ios') cuerpo = '<div class="card"><h3>Primero instalá la app</h3><p>En iPhone los avisos solo funcionan con la app instalada en la pantalla de inicio:</p><ol><li>Abrí esta página en <b>Safari</b>.</li><li>Tocá el botón <b>Compartir</b>.</li><li>Elegí <b>"Agregar a inicio"</b>.</li><li>Abrí la app desde el ícono nuevo y volvé a esta pantalla.</li></ol></div>';
+    else if (e === 'bloqueado') cuerpo = '<div class="card"><h3>Los avisos están bloqueados</h3><p>En algún momento se rechazó el permiso de notificaciones para esta app. Para activarlos, entrá a la configuración del navegador (o del celular) → Notificaciones → y permití los avisos de Norte Inversiones. Después volvé a esta pantalla.</p></div>';
+    else if (e === 'inactivo') cuerpo = '<div class="card"><h3>Activar avisos en este dispositivo</h3><p>Te vamos a avisar:</p><ul><li>Cuando <b>abre y cierra el mercado</b> (días hábiles, ' + hs + ' hs). El aviso de cierre trae el rendimiento del día de cada portafolio y el valor del dólar.</li><li>Cada vez que publicamos una <b>rotación</b> en un portafolio.</li></ul><p class="legal">Después podés elegir cuáles recibir, o desactivarlos cuando quieras.</p><button class="btn amarillo lg" id="pushOn">Activar avisos</button><p class="legal mt" id="pushMsg"></p></div>';
+    else {
+      var p = S.push.prefs || pushDefaults(), rot = p.rot || {};
+      var chk = function (k, txt, on) { return '<label class="swrow"><span>' + txt + '</span><input type="checkbox" data-pk="' + k + '"' + (on ? ' checked' : '') + '></label>'; };
+      cuerpo = '<div class="card"><h3>Mercado</h3>' + chk('open', 'Apertura del mercado', p.open !== false) + chk('close', 'Cierre del mercado <small>rendimiento del día y dólar</small>', p.close !== false) + '</div>' +
+        '<div class="card"><h3>Rotaciones</h3><p class="legal">Un aviso cada vez que cambia la composición de un portafolio.</p>' +
+        S.portfolios.map(function (pf) { return chk('rot:' + pf.slug, h(pf.name), rot[pf.slug] !== false); }).join('') + '</div>' +
+        '<p><button class="btn sec" id="pushOff">Desactivar todos los avisos en este dispositivo</button></p>';
+    }
+    setView('<a href="#/" class="legal">‹ Inicio</a><h1>Avisos</h1><p class="muted">Notificaciones en tu celular. Se configuran por dispositivo.</p>' + cuerpo + legalFoot());
+    var on = $('pushOn');
+    if (on) on.onclick = async function () {
+      on.disabled = true; $('pushMsg').textContent = 'Activando…';
+      try {
+        var perm = await Notification.requestPermission();
+        if (perm !== 'granted') { renderAvisos(); return; }
+        await pushGuardar(pushDefaults()); toast('Avisos activados'); renderAvisos();
+      } catch (x) { console.error(x); on.disabled = false; $('pushMsg').textContent = 'No se pudieron activar. Probá de nuevo en un momento.'; }
+    };
+    var off = $('pushOff');
+    if (off) off.onclick = async function () {
+      try { await db.deleteMyPush(); } catch (x) { }
+      S.push = null; try { localStorage.removeItem(PUSH_KEY); } catch (x) { }
+      toast('Avisos desactivados'); renderAvisos();
+    };
+    document.querySelectorAll('[data-pk]').forEach(function (c) {
+      c.onchange = async function () {
+        var p = S.push.prefs || pushDefaults(); p.rot = p.rot || {};
+        if (c.dataset.pk.indexOf('rot:') === 0) p.rot[c.dataset.pk.slice(4)] = c.checked; else p[c.dataset.pk] = c.checked;
+        try { await pushGuardar(p); toast('Guardado'); } catch (x) { console.error(x); c.checked = !c.checked; toast('No se pudo guardar'); }
+      };
+    });
   }
 
   // ============================================================
@@ -218,7 +304,7 @@
     var install = S.installEvt ? '<div class="installtip"><b>Instalá la app en tu teléfono</b> para tenerla a mano. <button class="btn sm amarillo" id="btnInstall">Instalar</button></div>'
       : isIos() && !isStandalone() ? '<div class="installtip"><b>Para instalarla en tu iPhone:</b> tocá el botón Compartir de Safari y elegí "Agregar a inicio".</div>' : '';
     setView('<h1>Hola' + (S.session && S.session.name ? ', ' + h(S.session.name) : '') + '</h1><p class="muted">Tres portafolios sugeridos, actualizados todos los meses. Valores en ' + (S.moneda === 'USD' ? 'dólares (CCL)' : 'pesos') + '.</p>' +
-      rotBannerHtml() +
+      rotBannerHtml() + avisosCardHtml() +
       '<div class="pcards">' + cards + '</div>' +
       '<p><a class="btn sec" href="#/comparar">Comparar los tres</a></p>' + install + legalFoot());
     var rb = $('rotClose'); if (rb) rb.onclick = function () { try { localStorage.setItem(ROT_VISTA_KEY, rb.dataset.d); } catch (e) { } renderHome(); };
@@ -470,8 +556,9 @@
     if (!top) renderHome();
     else if (top === 'p') renderDetail(parts[1], parts[2]);
     else if (top === 'comparar') renderComparar();
+    else if (top === 'avisos') renderAvisos();
     else if (top === 'aprender') renderHome(); // fichas educativas desactivadas por ahora
-    else if (top === 'salir') { clearSession(); S.session = null; S.loaded = false; db.closeSession(); location.hash = '#/'; renderHeader(); renderLogin('Cerraste la sesión.'); }
+    else if (top === 'salir') { if (S.push) { db.deleteMyPush().catch(function () { }); S.push = null; try { localStorage.removeItem(PUSH_KEY); } catch (e) { } } clearSession(); S.session = null; S.loaded = false; db.closeSession(); location.hash = '#/'; renderHeader(); renderLogin('Cerraste la sesión.'); }
     else renderHome();
   }
 

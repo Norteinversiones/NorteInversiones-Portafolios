@@ -70,6 +70,20 @@ service cloud.firestore {
       allow read, delete: if isAdmin();
     }
 
+    // Notificaciones: ajustes (los edita el Panel; la app lee la clave pública y los horarios).
+    match /config/{doc} { allow read: if true; allow write: if isAdmin(); }
+
+    // Dispositivos suscriptos a notificaciones: cada cliente con sesión escribe SOLO el suyo.
+    match /push_tokens/{uid} {
+      allow get, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid && esCliente()
+        && request.resource.data.keys().hasOnly(['token', 'accountId', 'prefs', 'updatedAt'])
+        && request.resource.data.token is string && request.resource.data.token.size() < 600
+        && request.resource.data.accountId is string
+        && request.resource.data.prefs is map;
+      allow read, delete: if isAdmin();
+    }
+
     // Cinta de cotizaciones (índices, commodities, MEP, riesgo país). La escribe el robot.
     match /market/{doc} { allow read: if true; allow write: if isAdmin(); }
 

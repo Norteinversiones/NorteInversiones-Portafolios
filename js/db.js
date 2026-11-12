@@ -11,6 +11,7 @@
      portfolios/{slug}/monthly_returns/{ym}  legacy + calculados
      authorized_accounts/{ALYC_COMITENTE}    índice de login: SIN nombre completo (es legible desde afuera)
      sessions/{uid}                          con qué comitente entró cada sesión de cliente
+     config/push · push_tokens/{uid}         notificaciones (ajustes y dispositivos suscriptos)
      education/{slug}
      jobs/ingesta
    ============================================================ */
@@ -383,6 +384,35 @@
     },
     saveEducation: async function (card) {
       await db.collection('education').doc(card.slug).set(clean(Object.assign({}, card, { updatedAt: ts() })), { merge: true });
+    },
+
+    // ---------- notificaciones push ----------
+    // config/push: ajustes (Panel) · push_tokens/{uid}: dispositivo de un cliente · jobs/push: estado del robot.
+    uid: function () { return auth && auth.currentUser ? auth.currentUser.uid : null; },
+    getPushConfig: async function () {
+      var d = await db.collection('config').doc('push').get();
+      return d.exists ? d.data() : null;
+    },
+    savePushConfig: async function (data) {
+      await db.collection('config').doc('push').set(clean(Object.assign({}, data, { updatedAt: ts() })), { merge: true });
+    },
+    getMyPush: async function () {
+      var uid = N.db.uid(); if (!uid) return null;
+      var d = await db.collection('push_tokens').doc(uid).get();
+      return d.exists ? d.data() : null;
+    },
+    saveMyPush: async function (data) {
+      var uid = N.db.uid(); if (!uid) throw new Error('sin sesión');
+      await db.collection('push_tokens').doc(uid).set({ token: data.token, accountId: data.accountId, prefs: data.prefs, updatedAt: ts() });
+    },
+    deleteMyPush: async function () {
+      var uid = N.db.uid(); if (!uid) return;
+      await db.collection('push_tokens').doc(uid).delete();
+    },
+    listPushTokens: async function () { return docs(await db.collection('push_tokens').get()); },
+    getPushState: async function () {
+      var d = await db.collection('jobs').doc('push').get();
+      return d.exists ? d.data() : null;
     },
 
     // ---------- cinta de cotizaciones ----------
