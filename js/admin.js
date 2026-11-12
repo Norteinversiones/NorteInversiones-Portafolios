@@ -186,6 +186,14 @@
     }
     html += '</div>';
 
+    // --- mensaje de rotación para el grupo de WhatsApp ---
+    html += '<div class="card" id="msgCard"><div class="row between"><div><h2>Mensaje para el grupo</h2>' +
+      '<div class="sub">Arma el texto de la rotación de los tres portafolios (versión vigente contra la anterior), listo para WhatsApp. Podés editarlo antes de copiarlo.</div></div>' +
+      '<button class="btn sec sm" data-act="msggen">' + (S.msg != null ? 'Volver a generar' : 'Generar mensaje') + '</button></div>' +
+      (S.msg != null ? '<textarea id="msgText" style="min-height:360px;line-height:1.4">' + h(S.msg) + '</textarea>' +
+        '<div class="row mt"><button class="btn amarillo" data-act="msgcopy">Copiar</button><button class="btn sec" data-act="msgwa">Abrir en WhatsApp</button>' +
+        '<span class="muted">' + h(S.msgNote || '') + '</span></div>' : '') + '</div>';
+
     // --- todas las versiones (publicadas, reemplazadas, borradores) ---
     var todas = (S.versions[slug] || []).slice().sort(function (a, b) {
       if (a.effectiveFrom !== b.effectiveFrom) return a.effectiveFrom < b.effectiveFrom ? 1 : -1;
@@ -208,6 +216,19 @@
     sec.innerHTML = html;
     bindPills(sec);
     bindRotacion(sec, slug, cur);
+  }
+  // Mensaje de rotación: por cada portafolio, la versión vigente contra la publicada anterior.
+  // Un portafolio cuenta como "rotado" si su versión vigente es de la misma tanda que la más
+  // reciente (hasta 10 días de diferencia); si no, sale como "Sin cambios".
+  function buildRotationMessage() {
+    var filas = S.portfolios.map(function (p) {
+      var pub = published(p.slug);
+      return { name: p.name, riskLevel: p.riskLevel, cur: pub.length ? pub[pub.length - 1] : null, prev: pub.length > 1 ? pub[pub.length - 2] : null };
+    }).filter(function (f) { return f.cur; });
+    if (!filas.length) return { text: '', note: 'Todavía no hay rotaciones publicadas.' };
+    var ultima = filas.map(function (f) { return f.cur.effectiveFrom; }).sort().pop();
+    filas.forEach(function (f) { f.rotated = f.cur.effectiveFrom >= E.addDays(ultima, -10); });
+    return { text: E.rotationMessage(filas), note: 'Rotación del ' + E.fmtDate(ultima) + '.' };
   }
   function kpi(l, v, n) { return '<div class="kpi"><div class="l">' + h(l) + '</div><div class="v ' + pctClass(n) + '">' + v + '</div></div>'; }
 
@@ -269,6 +290,7 @@
 
   function bindRotacion(sec, slug, cur) {
     sec.addEventListener('input', function (e) {
+      if (e.target.id === 'msgText') { S.msg = e.target.value; return; } // el mensaje editado no se pierde al redibujar
       var t = e.target, d = S.draft; if (!d) return;
       if (t.dataset.f) { d[t.dataset.f] = t.type === 'number' ? num(t.value) : t.value; return; }
       if (t.dataset.h) {
@@ -305,6 +327,13 @@
           if (fx2) { S.draft.cclAtBuy = fx2.ccl; S.draft.mepAtBuy = fx2.mep; }
           refreshEditor(); toast(n + ' precios tomados de ' + (S.book.liveOk ? 'intradía' : 'cierre') + ' ' + E.fmtDate(S.book.latestDate));
         }
+        else if (act === 'msggen') { var m = buildRotationMessage(); S.msg = m.text; S.msgNote = m.note; renderRotacion(); var mc = $('msgCard'); if (mc) mc.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        else if (act === 'msgcopy') {
+          var ta = $('msgText'); S.msg = ta.value;
+          try { await navigator.clipboard.writeText(ta.value); } catch (x) { ta.select(); document.execCommand('copy'); }
+          toast('Mensaje copiado');
+        }
+        else if (act === 'msgwa') { S.msg = $('msgText').value; window.open('https://wa.me/?text=' + encodeURIComponent(S.msg), '_blank', 'noopener'); }
         else if (act === 'savedraft') { await saveDraft(slug); toast('Borrador guardado'); }
         else if (act === 'publish') { await publish(slug, cur); }
         else if (act === 'recalc') { busy(true); await N.recompute(slug, { force: false }); await reloadPortfolio(slug); busy(false); renderRotacion(); toast('Rendimientos recalculados'); }
@@ -363,7 +392,8 @@
       await db.publishVersion(slug, Object.assign({ id: id }, payload), S.user.email);
       await N.recompute(slug, { force: !!esFix });
       S.draft = null; await reloadPortfolio(slug);
-      busy(false); renderRotacion(); toast('Rotación publicada');
+      var m = buildRotationMessage(); S.msg = m.text; S.msgNote = m.note;
+      busy(false); renderRotacion(); toast('Rotación publicada · el mensaje para el grupo quedó armado más abajo');
     } catch (e) { busy(false); throw e; }
   }
 

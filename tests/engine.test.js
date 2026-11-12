@@ -326,6 +326,20 @@
     eq(E.isWeekend('2026-09-05'), true); eq(E.isWeekend('2026-09-07'), false);
   });
 
+  test('cambios de una rotación: sale, entra, reduce, aumenta', function () {
+    var a = { holdings: [H('AL30', 15, 1), H('AO28', 10, 1), H('YM34O', 5, 1), H('KO', 70, 1)] };
+    var b = { holdings: [H('RSP', 15, 1), H('AO28', 5, 1), H('YM34O', 10, 1), H('KO', 70, 1)], rationale: 'Motivo.' };
+    var d = E.diffHoldings(a, b);
+    eq(d.out.map(function (x) { return x.ticker + x.from; }).join(), 'AL3015');
+    eq(d.in.map(function (x) { return x.ticker + x.to; }).join(), 'RSP15');
+    eq(d.down.map(function (x) { return x.ticker + x.from + '>' + x.to; }).join(), 'AO2810>5');
+    eq(d.up.map(function (x) { return x.ticker + x.delta; }).join(), 'YM34O5');
+    eq(E.diffHoldings(a, a).changed, false);
+    eq(E.diffHoldings(null, a).in.length, 4);
+    var msg = E.rotationMessage([{ name: 'Conservador', riskLevel: 1, prev: a, cur: b }, { name: 'Moderado', riskLevel: 2, prev: a, cur: a }, { name: 'Agresivo', riskLevel: 3, prev: a, cur: b, rotated: false }]);
+    eq(msg, 'A continuación, las rotaciones de cada cartera.\n\n🟢 CONSERVADOR\n\n➡️ Sale AL30 (15%)\n➡️ Entra RSP (15%)\n\n( - ) Reduce AO28 (10% → 5%)\n(+) Aumenta YM34O (5%)\n\nMotivo.\n\n\n🟡 MODERADO\n\nSin cambios en esta rotación.\n\n\n🔴 AGRESIVO\n\nSin cambios en esta rotación.');
+  });
+
   // ---------- reporte ----------
   var fails = results.filter(function (r) { return !r.ok; });
   if (isNode) {

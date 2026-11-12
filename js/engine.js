@@ -469,6 +469,45 @@
   // ------------------------------------------------------------
   // Validación de una versión antes de publicar (§4, §11)
   // ------------------------------------------------------------
+  // ---------- cambios entre dos composiciones (rotación) ----------
+  // Compara las tenencias de la versión anterior con la nueva y devuelve qué sale,
+  // qué entra y qué cambia de peso. `prev` puede ser null (primera composición).
+  function diffHoldings(prev, cur) {
+    function mapa(v) { var m = {}; ((v && v.holdings) || []).forEach(function (h) { if (h.ticker) m[h.ticker] = (m[h.ticker] || 0) + (Number(h.weightPct) || 0); }); return m; }
+    var a = mapa(prev), b = mapa(cur), r = { out: [], in: [], down: [], up: [] };
+    Object.keys(a).forEach(function (t) {
+      if (!(t in b)) r.out.push({ ticker: t, from: a[t], to: 0, delta: -a[t] });
+      else if (Math.abs(b[t] - a[t]) > 1e-9) (b[t] < a[t] ? r.down : r.up).push({ ticker: t, from: a[t], to: b[t], delta: b[t] - a[t] });
+    });
+    Object.keys(b).forEach(function (t) { if (!(t in a)) r.in.push({ ticker: t, from: 0, to: b[t], delta: b[t] }); });
+    function mayor(x, y) { return Math.abs(y.delta) - Math.abs(x.delta) || (x.ticker < y.ticker ? -1 : 1); }
+    r.out.sort(mayor); r.in.sort(mayor); r.down.sort(mayor); r.up.sort(mayor);
+    r.changed = r.out.length + r.in.length + r.down.length + r.up.length > 0;
+    return r;
+  }
+  // Mensaje de rotación para el grupo de WhatsApp (formato de Norte).
+  // items: [{ name, riskLevel, prev, cur, rotated }] · rotated=false → "Sin cambios".
+  function rotationMessage(items) {
+    function p(v) { return fmtNum(v, Math.abs(v - Math.round(v)) < 1e-9 ? 0 : 1) + '%'; }
+    var bloques = (items || []).map(function (it) {
+      var emoji = it.riskLevel === 1 ? '🟢' : it.riskLevel === 3 ? '🔴' : '🟡';
+      var out = [emoji + ' ' + String(it.name || '').toUpperCase(), ''];
+      var d = it.rotated === false ? { changed: false } : diffHoldings(it.prev, it.cur);
+      if (!d.changed) { out.push('Sin cambios en esta rotación.'); return out.join('\n'); }
+      var g1 = d.out.map(function (x) { return '➡️ Sale ' + x.ticker + ' (' + p(x.from) + ')'; })
+        .concat(d.in.map(function (x) { return '➡️ Entra ' + x.ticker + ' (' + p(x.to) + ')'; }));
+      var g2 = d.down.map(function (x) { return '( - ) Reduce ' + x.ticker + ' (' + p(x.from) + ' → ' + p(x.to) + ')'; })
+        .concat(d.up.map(function (x) { return '(+) Aumenta ' + x.ticker + ' (' + p(x.delta) + ')'; }));
+      if (g1.length) out.push(g1.join('\n'));
+      if (g1.length && g2.length) out.push('');
+      if (g2.length) out.push(g2.join('\n'));
+      var why = String((it.cur && it.cur.rationale) || '').trim();
+      if (why) { out.push(''); out.push(why); }
+      return out.join('\n');
+    });
+    return 'A continuación, las rotaciones de cada cartera.\n\n' + bloques.join('\n\n\n');
+  }
+
   function validateVersion(version, catalogTickers, previousVersion) {
     var errors = [];
     var hs = (version && version.holdings) || [];
@@ -532,7 +571,7 @@
     simulate: simulate, dailySeries: dailySeries, minSimulationDate: minSimulationDate, holdingsLive: holdingsLive,
     // composición
     betaPortfolio: betaPortfolio, weightTotal: weightTotal, compositionByType: compositionByType,
-    validateVersion: validateVersion,
+    validateVersion: validateVersion, diffHoldings: diffHoldings, rotationMessage: rotationMessage,
     // formato
     fmtNum: fmtNum, fmtPct: fmtPct, fmtArs: fmtArs, fmtUsd: fmtUsd, fmtDate: fmtDate, fmtMonth: fmtMonth, fmtMonthLong: fmtMonthLong
   };
