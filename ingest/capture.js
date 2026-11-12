@@ -323,6 +323,9 @@ const engine = require('../js/engine.js');
 
 async function recalcularPortafolios(db) {
   const ports = await db.collection('portfolios').get();
+  // Cobros de cupón / amortización cargados en el catálogo (instruments/{ticker}.payments).
+  const isnap = await db.collection('instruments').get();
+  const pagos = engine.paymentsOf(isnap.docs.map(function (d) { return Object.assign({ ticker: d.id }, d.data()); }));
   for (const pd of ports.docs) {
     const slug = pd.id;
     try {
@@ -339,7 +342,7 @@ async function recalcularPortafolios(db) {
         const qsnap = await db.collection('quotes').where('date', '>=', from).orderBy('date').get();
         const quotes = qsnap.docs.filter(function (d) { return d.id !== 'live'; }).map(function (d) { return d.data(); });
         const liveDoc = await db.collection('quotes').doc('live').get();
-        book = engine.quoteBook(quotes, liveDoc.exists ? liveDoc.data() : null);
+        book = engine.quoteBook(quotes, liveDoc.exists ? liveDoc.data() : null, pagos);
         computed = engine.computePortfolio(versions, book, {});
       }
 
@@ -351,7 +354,8 @@ async function recalcularPortafolios(db) {
         batch.set(pd.ref.collection('monthly_returns').doc(m.ym), {
           ym: m.ym, ars: m.ars, usd: m.usd, isLegacy: false, isClosed: !!m.isClosed, segments: m.segments,
           basisDate: m.basisDate || null, basisIsPartial: !!m.basisIsPartial, endDate: m.endDate || null,
-          isLive: !!m.isLive, missing: m.missing || [], computedAt: admin.firestore.FieldValue.serverTimestamp()
+          isLive: !!m.isLive, missing: m.missing || [], couponArs: m.couponArs || 0, couponUsd: m.couponUsd || 0, payments: m.payments || [],
+          computedAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
         n++;
         return m;
@@ -365,7 +369,8 @@ async function recalcularPortafolios(db) {
         stats: {
           accArs: history.accumulated.ars, accUsd: history.accumulated.usd, yearTotals: history.yearTotals,
           current: cur ? { ym: cur.ym, ars: cur.ars, usd: cur.usd, basisDate: cur.basisDate || null, basisIsPartial: !!cur.basisIsPartial,
-                           endDate: cur.endDate || null, isLive: !!cur.isLive, missing: cur.missing || [] } : null,
+                           endDate: cur.endDate || null, isLive: !!cur.isLive, missing: cur.missing || [],
+                           couponArs: cur.couponArs || 0, couponUsd: cur.couponUsd || 0 } : null,
           firstAppMonth: history.firstAppMonth, monthsCount: history.months.length,
           latestDate: book ? book.latestDate : null, isLive: !!(book && book.liveOk), computedAt: new Date().toISOString(),
           sparkline: sparkline

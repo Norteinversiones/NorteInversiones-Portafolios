@@ -174,3 +174,11 @@ body.simulando .wrap.narrow { background: repeating-linear-gradient(135deg, tran
 /* ---- calculadora por monto ---- */
 #calcMonto { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 10px 12px; max-width: 280px; }
 table.calc td small { color: var(--gris-2); font-weight: 400; }
+
+/* ---- parte del rendimiento que viene de cupones ---- */
+.cupon { font-size: 11px; color: var(--gris-2); line-height: 1.3; margin-top: 2px; }
+.hero .cupon { color: var(--blanco); opacity: .85; font-size: 12.5px; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.18); }
+.hero .cupon b { color: var(--amarillo); }
+.holding .hc .cupon { white-space: nowrap; }
+.simresult .cupon { font-size: 13px; }
+.chg .cp.pos { color: var(--pos); }

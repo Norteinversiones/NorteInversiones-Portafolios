@@ -19,7 +19,8 @@
       var from = E.addDays(E.monthStart(E.monthOf(versions[0].effectiveFrom)), -10);
       var quotes = await db.getQuotes(from);
       var live = await db.getLiveQuote();
-      book = E.quoteBook(quotes, live);
+      // Cobros de cupón / amortización cargados en el catálogo: entran al rendimiento.
+      book = E.quoteBook(quotes, live, E.paymentsOf(await db.getInstruments()));
       computed = E.computePortfolio(versions, book, {});
     }
 
@@ -42,7 +43,8 @@
       current: history.current ? {
         ym: history.current.ym, ars: history.current.ars, usd: history.current.usd,
         basisDate: history.current.basisDate || null, basisIsPartial: !!history.current.basisIsPartial,
-        endDate: history.current.endDate || null, isLive: !!history.current.isLive, missing: history.current.missing || []
+        endDate: history.current.endDate || null, isLive: !!history.current.isLive, missing: history.current.missing || [],
+        couponArs: history.current.couponArs || 0, couponUsd: history.current.couponUsd || 0
       } : null,
       firstAppMonth: history.firstAppMonth, monthsCount: history.months.length,
       latestDate: book ? book.latestDate : null, isLive: !!(book && book.liveOk),

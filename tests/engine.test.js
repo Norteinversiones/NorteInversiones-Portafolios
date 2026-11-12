@@ -340,6 +340,49 @@
     eq(msg, 'A continuación, las rotaciones de cada cartera.\n\n🟢 CONSERVADOR\n\n➡️ Sale AL30 (15%)\n➡️ Entra RSP (15%)\n\n( - ) Reduce AO28 (10% → 5%)\n(+) Aumenta YM34O (5%)\n\nMotivo.\n\n\n🟡 MODERADO\n\nSin cambios en esta rotación.\n\n\n🔴 AGRESIVO\n\nSin cambios en esta rotación.');
   });
 
+  // ---------- cobros de cupón / amortización ----------
+  test('Cupón cobrado en el mes: suma al rendimiento y queda identificado', function () {
+    var pays = E.paymentsOf([{ ticker: 'B', payments: [{ date: '2026-09-10', interest: 9.5, amort: 0, currency: 'ARS' }] }]);
+    var sin = E.computePortfolio([v1], E.quoteBook([qAug31, qSep10, qSep30]), { today: '2026-10-05' }).months[1];
+    var con = E.computePortfolio([v1], E.quoteBook([qAug31, qSep10, qSep30], null, pays), { today: '2026-10-05' }).months[1];
+    near(sin.ars, 2, 'sin cupón');
+    near(con.ars, (0.6 * (121 / 110 - 1) + 0.4 * ((171 + 9.5) / 190 - 1)) * 100, 'con cupón ARS');
+    near(con.couponArs, 0.4 * 9.5 / 190 * 100, 'parte por cupón'); near(con.ars - sin.ars, con.couponArs, 'diferencia = cupón');
+    near(con.usd, (0.6 * (121 / 1100 / (110 / 1000) - 1) + 0.4 * ((171 / 1100 + 9.5 / 1020) / (190 / 1000) - 1)) * 100, 'con cupón USD (al CCL del día de pago)');
+    eq(con.payments.length, 1); eq(con.payments[0].ticker, 'B'); eq(con.payments[0].kind, 'cupón');
+    eq(sin.couponArs, 0); eq(sin.payments.length, 0);
+  });
+  test('Cupón en dólares: se pasa a pesos con el CCL del día de pago', function () {
+    var pays = E.paymentsOf([{ ticker: 'B', payments: [{ date: '2026-09-10', interest: 0.005, amort: 0.005, currency: 'USD' }] }]);
+    var m = E.computePortfolio([v1], E.quoteBook([qAug31, qSep10, qSep30], null, pays), { today: '2026-10-05' }).months[1];
+    near(m.couponArs, 0.4 * (0.01 * 1020) / 190 * 100, 'cupón USD en ARS'); eq(m.payments[0].kind, 'renta y amortización');
+  });
+  test('Cupón el día de la rotación: lo cobra la cartera que sale, no la que entra', function () {
+    var pays = E.paymentsOf([{ ticker: 'B', payments: [{ date: '2026-09-15', interest: 4, currency: 'ARS' }] }]);
+    var r = E.computePortfolio([v1, v2], E.quoteBook([qAug31, qSep15, qSep30], null, pays), { today: '2026-10-05' });
+    var s = r.segments.filter(function (x) { return x.month === '2026-09'; });
+    near(s[0].couponArs, 0.4 * 4 / 190 * 100, 'sale: cobra'); eq(s[1].couponArs, 0, 'entra: no cobra');
+    eq(r.months[1].payments.length, 1);
+  });
+  test('Cupón: no se cuenta dos veces entre meses ni antes de tener precio; activo fuera de cartera no cobra', function () {
+    var pays = E.paymentsOf([{ ticker: 'B', payments: [{ date: '2026-09-30', interest: 3, currency: 'ARS' }, { date: '2026-10-31', interest: 2, currency: 'ARS' }, { date: '2026-11-20', interest: 9, currency: 'ARS' }] },
+      { ticker: 'Z', payments: [{ date: '2026-09-10', interest: 50, currency: 'ARS' }] }]);
+    var r = E.computePortfolio([v1], E.quoteBook([qAug31, qSep30, qOct31], null, pays), { today: '2026-11-05' });
+    var tot = r.months.reduce(function (t, m) { return t + m.payments.length; }, 0);
+    eq(tot, 2, 'dos cobros en total (el de noviembre todavía no)');
+    eq(r.months[1].payments.length, 1); eq(r.months[2].payments.length, 1);
+    // tenencias: el resultado del activo incluye lo cobrado desde la compra
+    var hl = E.holdingsLive(v1, E.quoteBook([qAug31, qSep30, qOct31], null, pays));
+    var b = hl.filter(function (x) { return x.ticker === 'B'; })[0];
+    near(b.varArs, ((180 + 5) / 200 - 1) * 100, 'resultado con cobros'); near(b.couponPctArs, 5 / 200 * 100, 'parte por cupón');
+    eq(hl.filter(function (x) { return x.ticker === 'A'; })[0].couponPctArs, 0);
+  });
+  test('Mensaje de rotación con cobros', function () {
+    var a = { holdings: [H('A', 100, 1)] };
+    var msg = E.rotationMessage([{ name: 'Moderado', riskLevel: 2, prev: a, cur: a, cobros: [{ ticker: 'YM34O', kind: 'cupón', pct: 0.35 }] }]);
+    eq(msg, 'A continuación, las rotaciones de cada cartera.\n\n🟡 MODERADO\n\nSin cambios en esta rotación.\n\n💵 Cobro de cupón YM34O (+0,35% al rendimiento de la cartera)');
+  });
+
   // ---------- reporte ----------
   var fails = results.filter(function (r) { return !r.ok; });
   if (isNode) {

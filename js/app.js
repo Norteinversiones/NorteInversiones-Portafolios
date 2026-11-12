@@ -23,6 +23,9 @@
   function riesgo(p) { return p.riskLevel === 1 ? 'Riesgo bajo' : p.riskLevel === 3 ? 'Riesgo alto' : 'Riesgo medio'; }
   function val(obj, key) { return obj ? (S.moneda === 'USD' ? obj[key + 'Usd'] != null ? obj[key + 'Usd'] : obj.usd : obj[key + 'Ars'] != null ? obj[key + 'Ars'] : obj.ars) : null; }
   function mv(m) { return m ? (S.moneda === 'USD' ? m.usd : m.ars) : null; }
+  // Parte del rendimiento que viene de cobros de cupón / amortización (0 si no hubo).
+  function cup(m) { var v = m ? (S.moneda === 'USD' ? m.couponUsd : m.couponArs) : 0; return v > 0.004 ? v : 0; }
+  function cupNota(m, cls) { var v = cup(m); return v ? '<div class="' + (cls || 'cupon') + '">incluye ' + E.fmtPct(v) + ' por cobro de cupones</div>' : ''; }
   function fmtTs(t) {
     if (!t) return null;
     var d = t.toDate ? t.toDate() : new Date(t);
@@ -62,6 +65,15 @@
       d.out.map(function (x) { return fila('out', 'Sale', x, pw(x.from)); }).join('') +
       d.up.map(function (x) { return fila('up', '↑ Sube', x, pw(x.from) + ' → ' + pw(x.to)); }).join('') +
       d.down.map(function (x) { return fila('down', '↓ Baja', x, pw(x.from) + ' → ' + pw(x.to)); }).join('') + '</div>';
+  }
+
+  // ---------- cobros de cupón / amortización ----------
+  // pays: [{ ticker, date, pctArs, pctUsd, kind }] · muestra cuánto aportó cada uno al portafolio.
+  function cobrosHtml(pays) {
+    return '<div class="chgs">' + (pays || []).slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).map(function (p) {
+      var ins = S.insMap[p.ticker] || {}, v = S.moneda === 'USD' ? p.pctUsd : p.pctArs;
+      return '<div class="chg"><span class="ct up">' + E.fmtDate(p.date).slice(0, 5) + '</span><b>' + h(p.ticker) + '</b><span class="cn">' + h(p.kind) + (ins.name ? ' · ' + h(ins.name) : '') + '</span><span class="cp pos">' + E.fmtPct(v) + '</span></div>';
+    }).join('') + '</div>';
   }
 
   // ---------- calculadora por monto ----------
@@ -112,8 +124,9 @@
   async function loadBase() {
     var r = await Promise.all([db.getPortfolios(), db.getLiveQuote(), db.getLastQuotes(3), db.getInstruments(), db.getEducation(false)]);
     S.portfolios = r[0].filter(function (p) { return p.name; }); S.pmap = {}; S.portfolios.forEach(function (p) { S.pmap[p.slug] = p; });
-    S.live = r[1]; S.lastEod = r[2]; S.book = E.quoteBook(S.lastEod, S.live);
     S.instruments = r[3]; S.insMap = {}; S.instruments.forEach(function (i) { S.insMap[i.ticker] = i; });
+    S.pays = E.paymentsOf(S.instruments); // cobros de cupón / amortización cargados en el catálogo
+    S.live = r[1]; S.lastEod = r[2]; S.book = E.quoteBook(S.lastEod, S.live, S.pays);
     S.education = r[4]; S.loaded = true;
   }
   async function ensureVersions(slug) { if (!S.versions[slug]) S.versions[slug] = await db.getVersions(slug, false); return S.versions[slug]; }
@@ -183,7 +196,7 @@
       var firstYm = null;
       return '<a class="pcard r' + (p.riskLevel || 2) + '" href="#/p/' + p.slug + '"><div class="head"><h2>' + h(p.name) + '</h2><span class="risk">' + riesgo(p) + '</span></div>' +
         '<div class="desc">' + h(p.description || '') + '</div>' +
-        '<div class="nums"><div class="n"><div class="l">' + (cur ? E.fmtMonthLong(cur.ym) : 'Mes en curso') + '</div><div class="v ' + pc(mes) + '">' + E.fmtPct(mes) + '</div><div class="s">' + (cur && cur.basisIsPartial ? 'desde el ' + E.fmtDate(cur.basisDate) : cur && cur.isLive ? 'en vivo' : cur ? 'al ' + E.fmtDate(cur.endDate) : 'sin datos') + '</div></div>' +
+        '<div class="nums"><div class="n"><div class="l">' + (cur ? E.fmtMonthLong(cur.ym) : 'Mes en curso') + '</div><div class="v ' + pc(mes) + '">' + E.fmtPct(mes) + '</div><div class="s">' + (cur && cur.basisIsPartial ? 'desde el ' + E.fmtDate(cur.basisDate) : cur && cur.isLive ? 'en vivo' : cur ? 'al ' + E.fmtDate(cur.endDate) : 'sin datos') + '</div>' + cupNota(cur) + '</div>' +
         '<div class="n"><div class="l">Acumulado</div><div class="v ' + pc(acc) + '">' + E.fmtPct(acc) + '</div><div class="s">' + (p.inceptionDate ? 'desde ' + E.fmtMonth(p.inceptionDate.slice(0, 7)) : '') + (st.monthsCount ? ' · ' + st.monthsCount + ' meses' : '') + '</div></div></div>' +
         sparkHtml(p, st) +
         '<span class="more">Ver portafolio ›</span></a>';
@@ -234,7 +247,8 @@
     var hero = '<div class="hero"><div class="row between"><div><h1>' + h(p.name) + '</h1><div class="sub">' + riesgo(p) + (cur ? ' · rotación del ' + E.fmtDate(cur.effectiveFrom) : '') + '</div></div>' +
       (cur ? '<div class="right"><div class="sub">Beta</div><b class="yellow">' + E.fmtNum(E.betaPortfolio(cur.holdings), 2) + '</b></div>' : '') + '</div>' +
       '<div class="big ' + pc(mes) + '">' + E.fmtPct(mes) + ' <small>' + (curM ? E.fmtMonthLong(curM.ym) + (curM.basisIsPartial ? ', desde el ' + E.fmtDate(curM.basisDate) : '') : 'mes en curso') + '</small></div>' +
-      '<div class="row2"><span>Acumulado <b class="' + pc(acc) + '">' + E.fmtPct(acc) + '</b></span>' + (p.inceptionDate ? '<span class="muted">desde ' + E.fmtMonth(p.inceptionDate.slice(0, 7)) + '</span>' : '') + '</div></div>';
+      '<div class="row2"><span>Acumulado <b class="' + pc(acc) + '">' + E.fmtPct(acc) + '</b></span>' + (p.inceptionDate ? '<span class="muted">desde ' + E.fmtMonth(p.inceptionDate.slice(0, 7)) + '</span>' : '') + '</div>' +
+      (cup(curM) ? '<div class="cupon">Del ' + E.fmtPct(mes) + ' del mes, <b>' + E.fmtPct(cup(curM)) + '</b> viene del cobro de cupones (renta de bonos, letras u ONs); el resto, de la variación de precios.</div>' : '') + '</div>';
     var tabs = ['tenencias|Tenencias', 'historico|Histórico', 'rotaciones|Rotaciones', 'simulador|Simulador'].map(function (t) { var x = t.split('|'); return '<a href="#/p/' + slug + '/' + x[0] + '" class="' + (tab === x[0] ? 'on' : '') + '">' + x[1] + '</a>'; }).join('');
     var body = '';
     if (tab === 'tenencias') body = tenenciasHtml(slug, cur);
@@ -252,12 +266,12 @@
     var rows = hs.map(function (x) {
       var ins = S.insMap[x.ticker] || {};
       var buy = S.moneda === 'USD' ? E.fmtUsd(x.buyUsd) : E.fmtArs(x.buyArs), now = S.moneda === 'USD' ? E.fmtUsd(x.nowUsd) : E.fmtArs(x.nowArs);
-      var v = S.moneda === 'USD' ? x.varUsd : x.varArs;
+      var v = S.moneda === 'USD' ? x.varUsd : x.varArs, cpn = S.moneda === 'USD' ? x.couponPctUsd : x.couponPctArs;
       return '<div class="holding"><div class="hl"><div class="tk">' + h(x.ticker) + (ins.type ? '<span class="tipo">' + h(tipo(ins.type)) + '</span>' : '') + '</div><div class="nm">' + h(ins.name || '') + '</div>' +
         '<div class="px"><span class="l">Precio de compra</span><b>' + buy + '</b></div>' +
         '<div class="px"><span class="l">Precio actual</span><b>' + now + '</b>' + (x.stale ? ' <span class="stale">al ' + E.fmtDate(x.asOf) + '</span>' : '') + '</div></div>' +
         '<div class="hc"><div class="l">Tenencia</div><div class="v">' + E.fmtNum(x.weightPct, 0) + '%</div></div>' +
-        '<div class="hc"><div class="l">Resultado</div><div class="v ' + pc(v) + '">' + E.fmtPct(v) + '</div></div></div>';
+        '<div class="hc"><div class="l">Resultado</div><div class="v ' + pc(v) + '">' + E.fmtPct(v) + '</div>' + (cpn > 0.004 ? '<div class="cupon">cupón ' + E.fmtPct(cpn) + '</div>' : '') + '</div></div>';
     }).join('');
     var comp = E.compositionByType(cur.holdings, S.insMap).map(function (c) { return { label: tipo(c.type), value: c.weightPct }; });
     var vs = S.versions[slug] || [], prev = vs.length > 1 ? vs[vs.length - 2] : null;
@@ -270,7 +284,7 @@
       '<div id="calcOut">' + calcHtml(cur, monto) + '</div>' +
       '<p class="legal">Cálculo orientativo: no incluye comisiones ni derechos de mercado, y los precios pueden diferir de los de tu bróker al momento de operar. En bonos, letras y ONs la cantidad son nominales y puede haber mínimos de compra.</p></div>';
     return cambios + '<div class="card"><h3>Composición</h3>' + C.donut({ slices: comp }) + '</div>' +
-      '<div class="card"><h3>Activos</h3><p class="legal">Resultado de cada activo desde su precio de compra, en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '.</p>' + rows + delayNote() + '</div>' + calc +
+      '<div class="card"><h3>Activos</h3><p class="legal">Resultado de cada activo desde su precio de compra, en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '. En bonos, letras y ONs incluye los cupones cobrados mientras estuvieron en cartera; debajo se indica qué parte es cupón.</p>' + rows + delayNote() + '</div>' + calc +
       (cur.rationale ? '<div class="card"><h3>Por qué esta composición</h3><p>' + h(cur.rationale).replace(/\n/g, '<br>') + '</p></div>' : '');
   }
 
@@ -283,6 +297,8 @@
     var years = {}; hist.months.forEach(function (m) { (years[m.ym.slice(0, 4)] = years[m.ym.slice(0, 4)] || {})[Number(m.ym.slice(5, 7))] = m; });
     var yt = {}; hist.yearTotals.forEach(function (y) { yt[y.year] = y; });
     var MES = ['E', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+    var todos = hist.months.reduce(function (t, m) { return t.concat(m.payments || []); }, []);
+    var cobrosCard = todos.length ? '<div class="card"><h3>Cupones cobrados</h3><p class="legal">Renta y amortización que pagaron los bonos, letras y ONs mientras estuvieron en el portafolio. El porcentaje es lo que cada cobro sumó al rendimiento del portafolio en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '; ya está incluido en los rendimientos mensuales.</p>' + cobrosHtml(todos) + '</div>' : '';
     var table = '<div class="tablewrap"><table class="ymtable"><thead><tr><th>Año</th>' + MES.map(function (m) { return '<th class="num">' + m + '</th>'; }).join('') + '<th class="num">Año</th></tr></thead><tbody>' +
       Object.keys(years).sort().map(function (y) {
         return '<tr><td><b>' + y + '</b></td>' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (mi) {
@@ -294,6 +310,7 @@
       '<div class="card"><h3>Acumulado compuesto</h3><div class="kpis mb"><div class="kpi"><div class="l">Total</div><div class="v ' + pc(mv(hist.accumulated)) + '">' + E.fmtPct(mv(hist.accumulated)) + '</div></div>' +
       hist.yearTotals.map(function (y) { return '<div class="kpi"><div class="l">' + y.year + '</div><div class="v ' + pc(mv(y)) + '">' + E.fmtPct(mv(y))+ '</div></div>'; }).join('') + '</div>' +
       C.lines({ series: [{ name: S.pmap[slug].name, points: acc }], labels: hist.months.map(function (m) { return E.fmtMonth(m.ym); }), splitAt: split }) + '</div>' +
+      cobrosCard +
       '<div class="card"><h3>Mes a mes</h3><p class="legal">En %. Los valores atenuados son del histórico previo a la app.</p>' + table + '</div>';
   }
 
@@ -302,16 +319,19 @@
     if (!vs.length) return '<div class="card"><p>Todavía no hay rotaciones publicadas.</p></div>';
     var from = E.addDays(E.monthStart(E.monthOf(vs[0].effectiveFrom)), -10);
     var quotes = await ensureQuotesFrom(from);
-    var book = E.quoteBook(quotes, S.live);
+    var book = E.quoteBook(quotes, S.live, S.pays);
     var segs = E.computeSegments(vs, book, {});
     var evs = vs.slice().reverse().map(function (v, idx) {
       var prevV = vs[vs.length - 2 - idx] || null;
       var ss = segs.filter(function (s) { return s.versionId === v.id; });
-      var r = ss.length ? { ars: E.chain(ss.map(function (s) { return s.returnArs; })), usd: E.chain(ss.map(function (s) { return s.returnUsd; })) } : null;
+      var r = ss.length ? { ars: E.chain(ss.map(function (s) { return s.returnArs; })), usd: E.chain(ss.map(function (s) { return s.returnUsd; })),
+        couponArs: ss.reduce(function (t, s) { return t + (s.couponArs || 0); }, 0), couponUsd: ss.reduce(function (t, s) { return t + (s.couponUsd || 0); }, 0),
+        payments: ss.reduce(function (t, s) { return t.concat(s.payments || []); }, []) } : null;
       var desde = ss.length ? ss[0].basisDate : null, hasta = ss.length ? ss[ss.length - 1].endDate : null;
       var hs = v.holdings.map(function (x) { var ins = S.insMap[x.ticker] || {}; return '<tr><td><b>' + h(x.ticker) + '</b> <small>' + h(tipo(ins.type)) + '</small></td><td class="num">' + E.fmtNum(x.weightPct, 0) + '%</td><td class="num">' + E.fmtArs(x.buyPriceArs) + '</td></tr>'; }).join('');
       return '<details class="ev" ' + (idx === 0 ? 'open' : '') + '><summary>' + E.fmtDate(v.effectiveFrom) + (v.effectiveTo ? ' → ' + E.fmtDate(v.effectiveTo) : ' → hoy') + (r ? ' <span class="' + pc(mv(r)) + '">' + E.fmtPct(mv(r), 1) + '</span>' : '') + '</summary>' +
         '<div class="meta">' + v.holdings.length + ' activos · beta ' + E.fmtNum(E.betaPortfolio(v.holdings), 2) + (r ? ' · rendimiento del período en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + ' (' + E.fmtDate(desde) + ' al ' + E.fmtDate(hasta) + ')' : ' · sin precios para medir este período') + '</div>' +
+        (r && cup(r) ? '<h4>Cupones cobrados en el período</h4>' + cobrosHtml(r.payments) : '') +
         '<h4>Qué cambió</h4>' + cambiosHtml(prevV, v) +
         (v.rationale ? '<h4>Por qué</h4><p>' + h(v.rationale).replace(/\n/g, '<br>') + '</p>' : '') +
         '<h4>Composición completa</h4><div class="tablewrap"><table><thead><tr><th>Activo</th><th class="num">%</th><th class="num">Compra</th></tr></thead><tbody>' + hs + '</tbody></table></div></details>';
@@ -333,7 +353,7 @@
     var vs = S.versions[slug] || [];
     var out = $('simOut'); out.innerHTML = '<p class="muted">Calculando…</p>';
     var quotes = await ensureQuotesFrom(E.addDays(from, -12));
-    var book = E.quoteBook(quotes, S.live);
+    var book = E.quoteBook(quotes, S.live, S.pays);
     var r = E.simulate(vs, book, from, {});
     S.sim[slug] = { from: from, result: r };
     applySim(slug);
@@ -347,7 +367,8 @@
     $('simBack').onclick = function () { delete S.sim[slug]; document.body.classList.remove('simulando'); route(); };
     if (!r.segments.length) { $('simOut').innerHTML = '<p class="alert warn">No hay precios suficientes para esa fecha.</p>'; return; }
     var v = mv(r.accumulated);
-    $('simOut').innerHTML = '<div class="simresult"><div class="big ' + pc(v) + '">' + E.fmtPct(v, 1) + '</div><div class="l">estimado en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + ' del ' + E.fmtDate(r.basisDate) + ' al ' + E.fmtDate(r.endDate) + (r.rotations ? ' · ' + r.rotations + ' rotación' + (r.rotations > 1 ? 'es' : '') + ' en el medio' : '') + '</div></div>' +
+    $('simOut').innerHTML = '<div class="simresult"><div class="big ' + pc(v) + '">' + E.fmtPct(v, 1) + '</div><div class="l">estimado en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + ' del ' + E.fmtDate(r.basisDate) + ' al ' + E.fmtDate(r.endDate) + (r.rotations ? ' · ' + r.rotations + ' rotación' + (r.rotations > 1 ? 'es' : '') + ' en el medio' : '') + '</div>' +
+      cupNota({ couponArs: r.segments.reduce(function (t, s) { return t + (s.couponArs || 0); }, 0), couponUsd: r.segments.reduce(function (t, s) { return t + (s.couponUsd || 0); }, 0) }) + '</div>' +
       (r.months.length > 1 ? '<div class="tablewrap"><table class="ymtable"><thead><tr><th>Mes</th><th class="num">Estimado</th></tr></thead><tbody>' + r.months.map(function (m) { return '<tr><td>' + E.fmtMonthLong(m.ym) + '</td><td class="num ' + pc(mv(m)) + '">' + E.fmtPct(mv(m), 1) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '');
     var d = $('simDate'); if (d) d.value = sim.from;
   }

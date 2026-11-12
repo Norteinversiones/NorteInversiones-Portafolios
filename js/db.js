@@ -237,7 +237,8 @@
         b.set(col.doc(m.ym), clean({
           ym: m.ym, ars: m.ars, usd: m.usd, isLegacy: !!m.isLegacy, isClosed: !!m.isClosed,
           segments: m.segments || 0, basisDate: m.basisDate || null, basisIsPartial: !!m.basisIsPartial,
-          endDate: m.endDate || null, isLive: !!m.isLive, missing: m.missing || [], computedAt: ts()
+          endDate: m.endDate || null, isLive: !!m.isLive, missing: m.missing || [],
+          couponArs: m.couponArs || 0, couponUsd: m.couponUsd || 0, payments: m.payments || [], computedAt: ts()
         }), { merge: true });
       });
     },

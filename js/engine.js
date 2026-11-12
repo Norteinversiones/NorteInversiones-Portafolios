@@ -70,7 +70,9 @@
   // ------------------------------------------------------------
   // Libro de cotizaciones: índice sobre los docs `quotes/{fecha}` + `quotes/live`
   // ------------------------------------------------------------
-  function quoteBook(quotes, live) {
+  //   payments (opcional): cobros de renta fija por ticker, salida de paymentsOf(instruments):
+  //     { TICKER: [{ date, interest, amort, currency }] } · montos cada 100 nominales, igual que el precio.
+  function quoteBook(quotes, live, payments) {
     var eod = (quotes || [])
       .filter(function (q) { return q && q.prices && q.date && q.isEod !== false && !q.noTrading; })
       .slice()
@@ -102,6 +104,30 @@
     }
 
     var lastDate = eod.length ? eod[eod.length - 1].date : null;
+
+    // Cobros (cupón / amortización) de `ticker` con fecha en (after, upTo]. Devuelve el efectivo
+    // cada 100 nominales en ARS y USD. Un pago en USD se pasa a pesos con el CCL del día de pago
+    // (o el más cercano anterior); uno en pesos se pasa a USD igual. Se asume que el efectivo
+    // queda sin reinvertir hasta el próximo corte (fin de mes o rotación).
+    function cashBetween(ticker, after, upTo) {
+      var out = { ars: 0, usd: 0, interestArs: 0, interestUsd: 0, items: [] };
+      var list = payments && payments[ticker];
+      if (!list || !after || !upTo) return out;
+      list.forEach(function (p) {
+        if (!(p.date > after && p.date <= upTo)) return;
+        var day = dayAtOrBefore(p.date) || dayAtOrAfter(p.date);
+        var ccl = day && day.fx ? Number(day.fx.ccl) : null;
+        var int = Number(p.interest) || 0, am = Number(p.amort) || 0, tot = int + am;
+        if (!(tot > 0)) return;
+        var enUsd = p.currency === 'USD';
+        if (!(ccl > 0)) return; // sin dólar de referencia no se puede valuar en las dos monedas
+        var k = enUsd ? ccl : 1;
+        out.ars += tot * k; out.usd += tot * k / ccl;
+        out.interestArs += int * k; out.interestUsd += int * k / ccl;
+        out.items.push({ ticker: ticker, date: p.date, ars: tot * k, usd: tot * k / ccl, interestArs: int * k, amortArs: am * k });
+      });
+      return out;
+    }
     // El intradía sólo vale si es más nuevo que el último cierre (mismo día: gana el cierre).
     var liveOk = !!(live && live.prices && live.date && (!lastDate || live.date > lastDate));
 
@@ -126,7 +152,7 @@
       dayAtOrBefore: dayAtOrBefore,
       dayAtOrAfter: dayAtOrAfter,
       priceAtOrBefore: priceAtOrBefore,
-      priceLatest: priceLatest
+      priceLatest: priceLatest, cashBetween: cashBetween, hasPayments: !!payments
     };
   }
 
@@ -160,18 +186,29 @@
     return m;
   }
 
-  // r = Σ w_i (P_fin / P_ini − 1), en ARS y USD.
-  function segmentReturn(holdings, startPx, endPx) {
-    var rArs = 0, rUsd = 0, wUsed = 0, missing = [];
+  // r = Σ w_i ((P_fin + cobros) / P_ini − 1), en ARS y USD.
+  // cobros = cupones y amortizaciones pagados en (cashFrom, cashTo] (si el libro trae pagos).
+  // Devuelve además cuánto del rendimiento viene de esos cobros (couponArs/Usd) y el detalle.
+  function segmentReturn(holdings, startPx, endPx, book, cashFrom, cashTo) {
+    var rArs = 0, rUsd = 0, wUsed = 0, missing = [], cArs = 0, cUsd = 0, pays = [];
     holdings.forEach(function (h) {
       var w = (Number(h.weightPct) || 0) / 100;
       var a = startPx[h.ticker], b = endPx[h.ticker];
       if (!a || !b || !(a.ars > 0) || !(b.ars > 0)) { missing.push(h.ticker); return; }
-      rArs += w * (b.ars / a.ars - 1);
-      if (a.usd > 0 && b.usd > 0) rUsd += w * (b.usd / a.usd - 1);
+      var cash = book && book.cashBetween ? book.cashBetween(h.ticker, cashFrom, cashTo) : null;
+      var ca = cash ? cash.ars : 0, cu = cash ? cash.usd : 0;
+      rArs += w * ((b.ars + ca) / a.ars - 1);
+      if (a.usd > 0 && b.usd > 0) rUsd += w * ((b.usd + cu) / a.usd - 1);
       wUsed += w;
+      if (cash && cash.items.length) {
+        cArs += w * ca / a.ars; if (a.usd > 0) cUsd += w * cu / a.usd;
+        cash.items.forEach(function (it) {
+          pays.push({ ticker: it.ticker, date: it.date, pctArs: w * it.ars / a.ars * 100, pctUsd: a.usd > 0 ? w * it.usd / a.usd * 100 : 0,
+            kind: it.interestArs > 0 && it.amortArs > 0 ? 'renta y amortización' : it.amortArs > 0 ? 'amortización' : 'cupón' });
+        });
+      }
     });
-    return { ars: rArs * 100, usd: rUsd * 100, weightUsed: wUsed * 100, missing: missing };
+    return { ars: rArs * 100, usd: rUsd * 100, weightUsed: wUsed * 100, missing: missing, couponArs: cArs * 100, couponUsd: cUsd * 100, payments: pays };
   }
 
   function chain(returnsPct) {
@@ -224,9 +261,13 @@
         var holdings = v.holdings || [];
         var startPx, startBasis, basisDate;
 
+        // Ventana de cobros (cashFrom, cashTo]: por fecha de calendario, para que los segmentos
+        // encadenen sin huecos ni doble conteo. Quien compra el día del pago no lo cobra.
+        var cashFrom, cashTo;
         if (s === v.effectiveFrom) {
           startBasis = 'buy';
           basisDate = v.effectiveFrom;
+          cashFrom = v.effectiveFrom;
           startPx = pxFromBuy(v, book);
         } else if (from && s === from) {
           startBasis = 'from';
@@ -234,18 +275,21 @@
           if (!dq) { dq = book.dayAtOrAfter(from); }
           if (!dq || dq.date > e) return;
           basisDate = dq.date;
+          cashFrom = dq.date;
           startPx = pxAtOrBefore(book, holdings, dq.date);
         } else {
           startBasis = 'close';
           var prev = book.dayAtOrBefore(addDays(mStart, -1));
           if (prev) {
             basisDate = prev.date;
+            cashFrom = addDays(mStart, -1);
             startPx = pxAtOrBefore(book, holdings, prev.date);
           } else {
             // Sin historia previa al mes: se arranca en el primer cierre disponible.
             var first = book.dayAtOrAfter(mStart);
             if (!first || first.date > e) return;
             basisDate = first.date;
+            cashFrom = first.date;
             startPx = pxAtOrBefore(book, holdings, first.date);
           }
         }
@@ -254,23 +298,26 @@
         if (!book.lastDate || e >= book.lastDate) {
           endPx = pxLatest(book, holdings);
           endDate = book.latestDate;
+          cashTo = book.latestDate;   // un pago con fecha posterior al último precio todavía no cuenta
           isLive = !!book.liveOk;
         } else {
           var ed = book.dayAtOrBefore(e);
           if (!ed) return;                       // no hay ningún cierre para valuar el fin
           endPx = pxAtOrBefore(book, holdings, e);
           endDate = ed.date;
+          cashTo = e;
         }
         if (!endDate || endDate < basisDate) return;
         // Un segmento que arranca en un cierre y termina en ese mismo cierre no mide nada
         // (típico: mes en curso sin cotizaciones todavía). El de rotación sí vale el mismo día.
         if (startBasis !== 'buy' && endDate <= basisDate) return;
 
-        var r = segmentReturn(holdings, startPx, endPx);
+        var r = segmentReturn(holdings, startPx, endPx, book, cashFrom, cashTo);
         segs.push({
           month: ym, versionId: v.id || null, dateFrom: s, dateTo: e,
           startBasis: startBasis, basisDate: basisDate, endDate: endDate,
           returnArs: r.ars, returnUsd: r.usd, weightUsed: r.weightUsed, missing: r.missing,
+          couponArs: r.couponArs, couponUsd: r.couponUsd, payments: r.payments,
           isLive: isLive, isClosed: e < today && !isLive
         });
       });
@@ -300,7 +347,11 @@
         isLive: ss.some(function (s) { return s.isLive; }),
         isClosed: monthEnd(ym) < today && ss.every(function (s) { return s.isClosed; }),
         isLegacy: false,
-        missing: missing
+        missing: missing,
+        // parte del rendimiento del mes que viene de cobros de cupón / amortización (puntos porcentuales)
+        couponArs: ss.reduce(function (t, s) { return t + (s.couponArs || 0); }, 0),
+        couponUsd: ss.reduce(function (t, s) { return t + (s.couponUsd || 0); }, 0),
+        payments: ss.reduce(function (t, s) { return t.concat(s.payments || []); }, [])
       };
     });
   }
@@ -429,14 +480,20 @@
     var now = pxLatest(book, version.holdings || []);
     return (version.holdings || []).map(function (h) {
       var a = buy[h.ticker], b = now[h.ticker];
+      // cobros desde la compra (el resultado del activo los incluye)
+      var cash = book && book.cashBetween && book.latestDate ? book.cashBetween(h.ticker, version.effectiveFrom, book.latestDate) : null;
+      var ca = cash ? cash.ars : 0, cu = cash ? cash.usd : 0;
       return {
+        cashArs: ca, cashUsd: cu,
+        couponPctArs: a && a.ars > 0 && ca > 0 ? ca / a.ars * 100 : 0,
+        couponPctUsd: a && a.usd > 0 && cu > 0 ? cu / a.usd * 100 : 0,
         ticker: h.ticker, weightPct: Number(h.weightPct) || 0, beta: Number(h.beta) || 0,
         buyArs: a ? a.ars : null, buyUsd: a ? a.usd : null,
         nowArs: b ? b.ars : null, nowUsd: b ? b.usd : null,
         asOf: b ? b.date : null, isLive: !!(b && b.isLive),
         stale: !!(b && book.latestDate && b.date < book.latestDate),
-        varArs: a && b && a.ars > 0 ? (b.ars / a.ars - 1) * 100 : null,
-        varUsd: a && b && a.usd > 0 && b.usd > 0 ? (b.usd / a.usd - 1) * 100 : null
+        varArs: a && b && a.ars > 0 ? ((b.ars + ca) / a.ars - 1) * 100 : null,
+        varUsd: a && b && a.usd > 0 && b.usd > 0 ? ((b.usd + cu) / a.usd - 1) * 100 : null
       };
     });
   }
@@ -469,6 +526,17 @@
   // ------------------------------------------------------------
   // Validación de una versión antes de publicar (§4, §11)
   // ------------------------------------------------------------
+  // Cobros cargados en el catálogo → mapa por ticker para quoteBook.
+  //   instruments: [{ ticker, payments: [{ date, interest, amort, currency }] }]
+  function paymentsOf(instruments) {
+    var m = {};
+    (instruments || []).forEach(function (i) {
+      var t = i.ticker || i.id, l = (i.payments || []).filter(function (p) { return p && isValidDate(p.date); });
+      if (t && l.length) m[t] = l;
+    });
+    return m;
+  }
+
   // ---------- cambios entre dos composiciones (rotación) ----------
   // Compara las tenencias de la versión anterior con la nueva y devuelve qué sale,
   // qué entra y qué cambia de peso. `prev` puede ser null (primera composición).
@@ -493,7 +561,8 @@
       var emoji = it.riskLevel === 1 ? '🟢' : it.riskLevel === 3 ? '🔴' : '🟡';
       var out = [emoji + ' ' + String(it.name || '').toUpperCase(), ''];
       var d = it.rotated === false ? { changed: false } : diffHoldings(it.prev, it.cur);
-      if (!d.changed) { out.push('Sin cambios en esta rotación.'); return out.join('\n'); }
+      var cobros = (it.cobros || []).map(function (c) { return '💵 Cobro de ' + c.kind + ' ' + c.ticker + ' (+' + fmtNum(c.pct, 2) + '% al rendimiento de la cartera)'; }).join('\n');
+      if (!d.changed) { out.push('Sin cambios en esta rotación.'); if (cobros) { out.push(''); out.push(cobros); } return out.join('\n'); }
       var g1 = d.out.map(function (x) { return '➡️ Sale ' + x.ticker + ' (' + p(x.from) + ')'; })
         .concat(d.in.map(function (x) { return '➡️ Entra ' + x.ticker + ' (' + p(x.to) + ')'; }));
       var g2 = d.down.map(function (x) { return '( - ) Reduce ' + x.ticker + ' (' + p(x.from) + ' → ' + p(x.to) + ')'; })
@@ -501,6 +570,8 @@
       if (g1.length) out.push(g1.join('\n'));
       if (g1.length && g2.length) out.push('');
       if (g2.length) out.push(g2.join('\n'));
+      // Cobros de cupón / amortización desde la rotación anterior: [{ ticker, kind, pct }]
+      if (cobros) { out.push(''); out.push(cobros); }
       var why = String((it.cur && it.cur.rationale) || '').trim();
       if (why) { out.push(''); out.push(why); }
       return out.join('\n');
@@ -571,7 +642,7 @@
     simulate: simulate, dailySeries: dailySeries, minSimulationDate: minSimulationDate, holdingsLive: holdingsLive,
     // composición
     betaPortfolio: betaPortfolio, weightTotal: weightTotal, compositionByType: compositionByType,
-    validateVersion: validateVersion, diffHoldings: diffHoldings, rotationMessage: rotationMessage,
+    validateVersion: validateVersion, diffHoldings: diffHoldings, rotationMessage: rotationMessage, paymentsOf: paymentsOf,
     // formato
     fmtNum: fmtNum, fmtPct: fmtPct, fmtArs: fmtArs, fmtUsd: fmtUsd, fmtDate: fmtDate, fmtMonth: fmtMonth, fmtMonthLong: fmtMonthLong
   };

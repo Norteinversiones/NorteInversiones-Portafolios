@@ -88,7 +88,7 @@
   async function reloadQuotes() {
     S.live = await db.getLiveQuote();
     S.lastEod = await db.getLastQuotes(8);
-    S.book = E.quoteBook(S.lastEod, S.live);
+    S.book = E.quoteBook(S.lastEod, S.live, E.paymentsOf(S.instruments));
   }
   async function reloadPortfolio(slug) {
     S.versions[slug] = await db.getVersions(slug, true);
@@ -158,13 +158,14 @@
     if (cur) {
       var st = p.stats || {};
       html += '<div class="sub">Rotación del ' + E.fmtDate(cur.effectiveFrom) + ' · CCL de compra ' + E.fmtArs(cur.cclAtBuy) + (cur.publishedAt ? ' · publicada ' + fmtTs(cur.publishedAt) : '') + '</div></div>';
-      html += '<div class="row"><button class="btn sec sm" data-act="recalc">Recalcular</button></div></div>';
+      html += '<div class="row"><button class="btn sec sm" data-act="recalc">Recalcular</button><button class="btn sec sm" data-act="recalcall" title="Vuelve a calcular también los meses ya cerrados (por ejemplo, si cargaste un cupón de un mes anterior)">Recalcular todo</button></div></div>';
       html += '<div class="kpis mb">' +
         kpi('Mes en curso ARS', st.current ? E.fmtPct(st.current.ars) : '—', st.current && st.current.ars) +
         kpi('Mes en curso USD', st.current ? E.fmtPct(st.current.usd) : '—', st.current && st.current.usd) +
         kpi('Acumulado ARS', st.accArs != null ? E.fmtPct(st.accArs) : '—', st.accArs) +
         kpi('Acumulado USD', st.accUsd != null ? E.fmtPct(st.accUsd) : '—', st.accUsd) +
         kpi('Beta', E.fmtNum(E.betaPortfolio(cur.holdings), 3)) + '</div>';
+      if (st.current && st.current.couponArs > 0) html += '<div class="alert info">El mes en curso incluye <b>' + E.fmtPct(st.current.couponArs) + '</b> (ARS) por cobros de cupón / amortización.</div>';
       if (st.current && st.current.basisIsPartial) html += '<div class="alert warn">El mes en curso se mide desde el ' + E.fmtDate(st.current.basisDate) + ' (primer cierre disponible), no desde el inicio del mes.</div>';
       if (st.current && st.current.missing && st.current.missing.length) html += '<div class="alert bad">Sin precio: ' + st.current.missing.join(', ') + '. Revisá el catálogo o la ingesta.</div>';
       html += holdingsTable(cur);
@@ -220,15 +221,36 @@
   // Mensaje de rotación: por cada portafolio, la versión vigente contra la publicada anterior.
   // Un portafolio cuenta como "rotado" si su versión vigente es de la misma tanda que la más
   // reciente (hasta 10 días de diferencia); si no, sale como "Sin cambios".
-  function buildRotationMessage() {
+  // Incluye los cobros de cupón / amortización que tuvo cada portafolio desde su rotación anterior
+  // (o en los últimos 35 días si no rotó), con su aporte al rendimiento en pesos.
+  async function buildRotationMessage() {
     var filas = S.portfolios.map(function (p) {
       var pub = published(p.slug);
-      return { name: p.name, riskLevel: p.riskLevel, cur: pub.length ? pub[pub.length - 1] : null, prev: pub.length > 1 ? pub[pub.length - 2] : null };
+      return { name: p.name, riskLevel: p.riskLevel, pub: pub, cur: pub.length ? pub[pub.length - 1] : null, prev: pub.length > 1 ? pub[pub.length - 2] : null };
     }).filter(function (f) { return f.cur; });
     if (!filas.length) return { text: '', note: 'Todavía no hay rotaciones publicadas.' };
     var ultima = filas.map(function (f) { return f.cur.effectiveFrom; }).sort().pop();
-    filas.forEach(function (f) { f.rotated = f.cur.effectiveFrom >= E.addDays(ultima, -10); });
-    return { text: E.rotationMessage(filas), note: 'Rotación del ' + E.fmtDate(ultima) + '.' };
+    var pays = E.paymentsOf(S.instruments), hayCobros = false;
+    if (Object.keys(pays).length) {
+      var hoy = E.todayART();
+      filas.forEach(function (f) { f.rotated = f.cur.effectiveFrom >= E.addDays(ultima, -10); f.desde = f.rotated && f.prev ? f.prev.effectiveFrom : f.rotated ? f.cur.effectiveFrom : E.addDays(hoy, -35); f.hasta = f.rotated && f.prev ? f.cur.effectiveFrom : hoy; });
+      var min = filas.map(function (f) { return f.desde; }).sort()[0];
+      var book = E.quoteBook(await db.getQuotes(E.addDays(E.monthStart(E.monthOf(min)), -10)), S.live, pays);
+      filas.forEach(function (f) {
+        var vistos = {};
+        f.cobros = [];
+        E.computeSegments(f.pub, book, {}).forEach(function (s) {
+          (s.payments || []).forEach(function (p) {
+            // de la cartera que sale: (rotación anterior, esta rotación]; sin rotación: últimos 35 días
+            if (!(p.date > f.desde && p.date <= f.hasta) || vistos[p.ticker + p.date]) return;
+            if (f.rotated && f.prev && s.versionId !== f.prev.id) return;
+            vistos[p.ticker + p.date] = 1; f.cobros.push({ ticker: p.ticker, kind: p.kind, pct: p.pctArs });
+          });
+        });
+        if (f.cobros.length) hayCobros = true;
+      });
+    } else filas.forEach(function (f) { f.rotated = f.cur.effectiveFrom >= E.addDays(ultima, -10); });
+    return { text: E.rotationMessage(filas), note: 'Rotación del ' + E.fmtDate(ultima) + '.' + (hayCobros ? ' Incluye cobros de cupón.' : '') };
   }
   function kpi(l, v, n) { return '<div class="kpi"><div class="l">' + h(l) + '</div><div class="v ' + pctClass(n) + '">' + v + '</div></div>'; }
 
@@ -327,7 +349,7 @@
           if (fx2) { S.draft.cclAtBuy = fx2.ccl; S.draft.mepAtBuy = fx2.mep; }
           refreshEditor(); toast(n + ' precios tomados de ' + (S.book.liveOk ? 'intradía' : 'cierre') + ' ' + E.fmtDate(S.book.latestDate));
         }
-        else if (act === 'msggen') { var m = buildRotationMessage(); S.msg = m.text; S.msgNote = m.note; renderRotacion(); var mc = $('msgCard'); if (mc) mc.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        else if (act === 'msggen') { var m = await buildRotationMessage(); S.msg = m.text; S.msgNote = m.note; renderRotacion(); var mc = $('msgCard'); if (mc) mc.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
         else if (act === 'msgcopy') {
           var ta = $('msgText'); S.msg = ta.value;
           try { await navigator.clipboard.writeText(ta.value); } catch (x) { ta.select(); document.execCommand('copy'); }
@@ -337,6 +359,10 @@
         else if (act === 'savedraft') { await saveDraft(slug); toast('Borrador guardado'); }
         else if (act === 'publish') { await publish(slug, cur); }
         else if (act === 'recalc') { busy(true); await N.recompute(slug, { force: false }); await reloadPortfolio(slug); busy(false); renderRotacion(); toast('Rendimientos recalculados'); }
+        else if (act === 'recalcall') {
+          if (!confirm('Recalcular TODOS los meses de ' + S.pmap[slug].name + ' medidos por la app, incluso los ya cerrados. Usalo si cargaste un cupón o un precio de un mes anterior. Los valores publicados de esos meses pueden cambiar. ¿Confirmás?')) return;
+          busy(true); await N.recompute(slug, { force: true }); await reloadPortfolio(slug); busy(false); renderRotacion(); toast('Todos los meses recalculados');
+        }
         else if (act === 'restore') {
           if (!confirm('Restaurar esta versión como publicada. Las publicadas con la misma fecha quedan reemplazadas y se recalcula todo. ¿Confirmás?')) return;
           busy(true); await db.restoreVersion(slug, b.dataset.id); await N.recompute(slug, { force: true }); await reloadPortfolio(slug); S.draft = null; busy(false); renderRotacion(); toast('Versión restaurada');
@@ -392,7 +418,7 @@
       await db.publishVersion(slug, Object.assign({ id: id }, payload), S.user.email);
       await N.recompute(slug, { force: !!esFix });
       S.draft = null; await reloadPortfolio(slug);
-      var m = buildRotationMessage(); S.msg = m.text; S.msgNote = m.note;
+      var m = await buildRotationMessage(); S.msg = m.text; S.msgNote = m.note;
       busy(false); renderRotacion(); toast('Rotación publicada · el mensaje para el grupo quedó armado más abajo');
     } catch (e) { busy(false); throw e; }
   }
@@ -463,6 +489,34 @@
   // ============================================================
   // CATÁLOGO
   // ============================================================
+  // Cobros de renta fija (cupón y amortización). Montos cada 100 nominales, en la misma unidad que el precio.
+  var RENTA_FIJA = { BONO_SOBERANO: 1, BONO_CER: 1, ON: 1, LECAP: 1, BONCAP: 1 };
+  function pagosHtml(ins) {
+    var rows = (ins.payments || []).map(function (p, i) {
+      return '<tr data-p="' + i + '"><td><input type="date" data-p="date" value="' + h(p.date || '') + '"></td>' +
+        '<td><input class="w-s" type="number" step="0.0001" data-p="interest" value="' + h(p.interest == null ? '' : p.interest) + '"></td>' +
+        '<td><input class="w-s" type="number" step="0.0001" data-p="amort" value="' + h(p.amort == null ? '' : p.amort) + '"></td>' +
+        '<td><select data-p="currency"><option value="ARS"' + (p.currency !== 'USD' ? ' selected' : '') + '>Pesos</option><option value="USD"' + (p.currency === 'USD' ? ' selected' : '') + '>Dólares</option></select></td>' +
+        '<td><button class="iconbtn" data-act="delpay" title="Quitar">✕</button></td></tr>';
+    }).join('');
+    return '<h3 class="mt">Cobros (cupón y amortización)</h3><div class="sub">Cada pago suma al rendimiento de los portafolios que tengan el activo en esa fecha. Cargá el monto <b>cada 100 nominales</b> (la misma unidad que el precio), en la moneda en que se paga. La fecha es la de pago.</div>' +
+      '<div class="tablewrap"><table><thead><tr><th>Fecha de pago</th><th>Renta (cupón)</th><th>Amortización</th><th>Moneda</th><th></th></tr></thead><tbody id="payRows">' + rows + '</tbody></table></div>' +
+      '<button class="btn sm sec" data-act="addpay">+ Agregar pago</button>';
+  }
+  function leerPagos(sec) {
+    var out = [];
+    sec.querySelectorAll('#payRows tr').forEach(function (tr) {
+      var p = {}; tr.querySelectorAll('[data-p]').forEach(function (inp) { p[inp.dataset.p] = inp.type === 'number' ? num(inp.value) : inp.value; });
+      out.push({ date: p.date || '', interest: p.interest || 0, amort: p.amort || 0, currency: p.currency === 'USD' ? 'USD' : 'ARS' });
+    });
+    return out;
+  }
+  function leerInstrumento(sec) { // guarda en S.editIns lo tipeado, para no perderlo al redibujar
+    if (!S.editIns) return;
+    sec.querySelectorAll('[data-i]').forEach(function (inp) { S.editIns[inp.dataset.i] = inp.type === 'checkbox' ? inp.checked : inp.value.trim(); });
+    if (sec.querySelector('#payRows')) S.editIns.payments = leerPagos(sec);
+  }
+
   function renderCatalogo() {
     var sec = $('tab-catalogo');
     var ins = S.editIns || { ticker: '', name: '', type: 'CEDEAR', priceSymbol: '', underlying: '', cedearRatio: '', usdBasis: 'underlying', isActive: true, order: S.instruments.length };
@@ -485,6 +539,7 @@
       '<label class="f"><span>Cómo mostrar el valor en USD</span><select data-i="usdBasis">' +
       ['underlying|Precio del subyacente (CEDEAR/ETF)', 'parity|Paridad (bonos, ONs)', 'ccl_conversion|Conversión por CCL'].map(function (o) { var p = o.split('|'); return '<option value="' + p[0] + '"' + (p[0] === ins.usdBasis ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') + '</select></label>' +
       '<label class="check"><input type="checkbox" data-i="isActive"' + (ins.isActive !== false ? ' checked' : '') + '> Activo (se captura precio y se puede usar en rotaciones)</label>' +
+      (RENTA_FIJA[ins.type] ? pagosHtml(ins) : '') +
       '<div class="row mt"><button class="btn" data-act="saveins">Guardar</button>' + (S.editIns ? '<button class="btn sec" data-act="newins">Nuevo</button>' : '') + '</div></div></div>';
     sec.innerHTML = html;
     sec.querySelectorAll('tr[data-tk]').forEach(function (tr) { tr.onclick = function () { S.editIns = Object.assign({}, S.insMap[tr.dataset.tk]); renderCatalogo(); }; });
@@ -494,9 +549,28 @@
       o.ticker = o.ticker.toUpperCase(); o.priceSymbol = (o.priceSymbol || o.ticker).toUpperCase(); o.cedearRatio = num(o.cedearRatio); o.underlying = o.underlying || null;
       if (S.editIns) o.order = S.editIns.order; else o.order = S.instruments.length;
       if (!o.name) o.name = o.ticker;
-      try { await db.saveInstrument(o); S.instruments = await db.getInstruments(); S.insMap = {}; S.instruments.forEach(function (i) { S.insMap[i.ticker] = i; }); S.editIns = null; renderCatalogo(); toast('Instrumento guardado. La ingesta lo captura desde la próxima corrida.'); }
-      catch (e) { toast('Error: ' + e.message, true); }
+      var conPagos = !!sec.querySelector('#payRows'), antes = JSON.stringify((S.editIns && S.insMap[o.ticker] && S.insMap[o.ticker].payments) || []);
+      if (conPagos) {
+        o.payments = leerPagos(sec).filter(function (p) { return p.date || p.interest || p.amort; });
+        var mal = o.payments.filter(function (p) { return !E.isValidDate(p.date) || !(p.interest + p.amort > 0); });
+        if (mal.length) return toast('Revisá los pagos: cada uno necesita fecha y un monto mayor a cero', true);
+        o.payments.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+      }
+      try {
+        await db.saveInstrument(o); S.instruments = await db.getInstruments(); S.insMap = {}; S.instruments.forEach(function (i) { S.insMap[i.ticker] = i; }); S.editIns = null;
+        if (conPagos && JSON.stringify(o.payments) !== antes) {
+          // Cambiaron los cobros: se recalculan los portafolios (los meses ya cerrados no se tocan).
+          busy(true); await reloadQuotes();
+          for (var k = 0; k < S.portfolios.length; k++) { await N.recompute(S.portfolios[k].slug, { force: false }); await reloadPortfolio(S.portfolios[k].slug); }
+          busy(false); renderCatalogo(); toast('Cobros guardados y rendimientos recalculados. Si el pago es de un mes ya cerrado, usá "Recalcular todo" en Rotación.');
+        } else { renderCatalogo(); toast('Instrumento guardado. La ingesta lo captura desde la próxima corrida.'); }
+      }
+      catch (e) { busy(false); toast('Error: ' + e.message, true); }
     };
+    var tsel = sec.querySelector('select[data-i=type]');
+    if (tsel) tsel.onchange = function () { if (!S.editIns) return; leerInstrumento(sec); renderCatalogo(); };
+    var ap = sec.querySelector('[data-act=addpay]'); if (ap) ap.onclick = function () { if (!S.editIns) return; leerInstrumento(sec); S.editIns.payments = (S.editIns.payments || []).concat([{ date: '', interest: null, amort: null, currency: 'ARS' }]); renderCatalogo(); };
+    sec.querySelectorAll('[data-act=delpay]').forEach(function (b) { b.onclick = function () { leerInstrumento(sec); S.editIns.payments.splice(Number(b.closest('tr').dataset.p), 1); renderCatalogo(); }; });
     var nb = sec.querySelector('[data-act=newins]'); if (nb) nb.onclick = function () { S.editIns = null; renderCatalogo(); };
   }
 
