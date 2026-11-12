@@ -1,10 +1,12 @@
 /* ============================================================
    Service worker · Norte Inversiones
-   Estrategia: la cáscara (html/css/js/íconos) se sirve desde caché y se
-   actualiza en segundo plano; los datos (Firestore) nunca pasan por acá.
+   Estrategia: RED PRIMERO. Cada archivo propio (html/css/js/íconos) se pide a la
+   red; la caché sólo se usa si no hay conexión. Así nunca se mezclan archivos de
+   versiones distintas después de una actualización.
+   Los datos (Firestore) nunca pasan por acá.
    Cambiar VERSION en cada deploy para renovar la caché.
    ============================================================ */
-var VERSION = 'norte-v202611120045';
+var VERSION = 'norte-v202611120130';
 var SHELL = [
   './', './index.html', './manifest.webmanifest',
   './css/app.css', './css/client.css',
@@ -13,7 +15,12 @@ var SHELL = [
 ];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(SHELL).catch(function () { }); }).then(function () { return self.skipWaiting(); }));
+  e.waitUntil(caches.open(VERSION).then(function (c) {
+    // cache: 'reload' → baja cada archivo de la red, sin pasar por la caché HTTP del navegador.
+    return Promise.all(SHELL.map(function (u) {
+      return fetch(new Request(u, { cache: 'reload' })).then(function (res) { if (res.ok) return c.put(u, res); }).catch(function () { });
+    }));
+  }).then(function () { return self.skipWaiting(); }));
 });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) {
@@ -28,12 +35,12 @@ self.addEventListener('fetch', function (e) {
   var fuente = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
   if (!propio && !fuente) return;
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: propio }).then(function (cached) {
-      var red = fetch(e.request).then(function (res) {
-        if (res && res.ok) caches.open(VERSION).then(function (c) { c.put(e.request, res.clone()); });
-        return res;
-      }).catch(function () { return cached; });
-      return cached || red;
+    fetch(e.request).then(function (res) {
+      if (res && res.ok) { var copia = res.clone(); caches.open(VERSION).then(function (c) { c.put(e.request, copia); }); }
+      return res;
+    }).catch(function () {
+      // Sin conexión: lo guardado (primero la versión exacta; si no está, la del mismo archivo).
+      return caches.match(e.request).then(function (r) { return r || caches.match(e.request, { ignoreSearch: true }); });
     })
   );
 });

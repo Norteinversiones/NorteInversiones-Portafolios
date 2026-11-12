@@ -7,6 +7,20 @@
 (function () {
   'use strict';
   var N = window.NORTE, E = N.engine, db = N.db, C = N.charts;
+
+  // Autocorrección: si el navegador sirvió un motor (engine.js) de una versión anterior,
+  // se limpia la caché de la app y se recarga UNA vez. Evita errores tipo "E.xxx is not a function".
+  if (typeof E.paymentsOf !== 'function') {
+    var YA = 'norte_recarga_motor';
+    var ya = false; try { ya = sessionStorage.getItem(YA) === '1'; sessionStorage.setItem(YA, '1'); } catch (x) { }
+    if (!ya) {
+      var limpiar = [];
+      if (window.caches) limpiar.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+      if (navigator.serviceWorker) limpiar.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+      Promise.all(limpiar).catch(function () { }).then(function () { location.reload(); });
+      return;
+    }
+  }
   var SESSION_KEY = 'norte_sesion_v1', MONEDA_KEY = 'norte_moneda', SESSION_DAYS = 30;
 
   var S = {
