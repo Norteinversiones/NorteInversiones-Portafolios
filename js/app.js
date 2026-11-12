@@ -50,6 +50,43 @@
   }
   function delayNote() { return '<p class="legal mt">Las cotizaciones pueden no coincidir exactamente con las del mercado por un leve delay. Actualizado: ' + h(lastUpdate()) + '.</p>'; }
 
+  // ---------- qué cambió entre dos composiciones ----------
+  function pw(v) { return E.fmtNum(v, Math.abs(v - Math.round(v)) < 1e-9 ? 0 : 1) + '%'; }
+  function cambiosHtml(prev, cur) {
+    if (!prev) return '<p class="legal">Composición inicial del portafolio.</p>';
+    var d = E.diffHoldings(prev, cur);
+    if (!d.changed) return '<p class="legal">Misma composición que la rotación anterior.</p>';
+    function fila(cls, txt, x, det) { var ins = S.insMap[x.ticker] || {}; return '<div class="chg"><span class="ct ' + cls + '">' + txt + '</span><b>' + h(x.ticker) + '</b><span class="cn">' + h(ins.name || '') + '</span><span class="cp">' + det + '</span></div>'; }
+    return '<div class="chgs">' +
+      d.in.map(function (x) { return fila('in', 'Entra', x, pw(x.to)); }).join('') +
+      d.out.map(function (x) { return fila('out', 'Sale', x, pw(x.from)); }).join('') +
+      d.up.map(function (x) { return fila('up', '↑ Sube', x, pw(x.from) + ' → ' + pw(x.to)); }).join('') +
+      d.down.map(function (x) { return fila('down', '↓ Baja', x, pw(x.from) + ' → ' + pw(x.to)); }).join('') + '</div>';
+  }
+
+  // ---------- calculadora por monto ----------
+  var MONTO_KEY = 'norte_monto', ROT_VISTA_KEY = 'norte_rot_vista';
+  var RENTA_FIJA = { BONO_SOBERANO: 1, BONO_CER: 1, ON: 1, LECAP: 1, BONCAP: 1 };
+  function montoGuardado() { try { return Number(localStorage.getItem(MONTO_KEY)) || 0; } catch (e) { return 0; } }
+  function calcHtml(cur, monto) {
+    if (!(monto > 0)) return '<p class="legal">Escribí un monto para ver cuánto correspondería a cada activo.</p>';
+    var fx = S.live && S.live.fx ? S.live.fx : (S.lastEod[0] && S.lastEod[0].fx);
+    var enUsd = S.moneda === 'USD', ccl = fx && fx.ccl;
+    if (enUsd && !(ccl > 0)) return '<p class="legal">No hay cotización del dólar para convertir el monto.</p>';
+    var montoArs = enUsd ? monto * ccl : monto, usado = 0;
+    var rows = E.holdingsLive(cur, S.book).map(function (x) {
+      var ins = S.insMap[x.ticker] || {}, parte = montoArs * x.weightPct / 100, cant = '—';
+      if (x.nowArs > 0 && ins.type !== 'FCI') {
+        if (RENTA_FIJA[ins.type]) { var vn = Math.floor(parte / x.nowArs * 100); cant = E.fmtNum(vn, 0) + ' <small>nominales</small>'; usado += vn * x.nowArs / 100; }
+        else { var n = Math.floor(parte / x.nowArs); cant = E.fmtNum(n, 0) + ' <small>' + (n === 1 ? 'unidad' : 'unidades') + '</small>'; usado += n * x.nowArs; }
+      } else usado += parte;
+      return '<tr><td><b>' + h(x.ticker) + '</b> <small>' + E.fmtNum(x.weightPct, 0) + '%</small></td><td class="num">' + (enUsd ? E.fmtUsd(parte / ccl, 0) : E.fmtArs(parte, 0)) + '</td><td class="num">' + cant + '</td></tr>';
+    }).join('');
+    var sobra = Math.max(0, montoArs - usado);
+    return '<div class="tablewrap"><table class="calc"><thead><tr><th>Activo</th><th class="num">Monto</th><th class="num">Cantidad aprox.</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<p class="legal mt">Quedaría sin invertir aprox. ' + (enUsd ? E.fmtUsd(sobra / ccl, 0) : E.fmtArs(sobra, 0)) + ' por el redondeo a unidades enteras.' + (enUsd ? ' Monto convertido a pesos al CCL de ' + E.fmtArs(ccl, 0) + '.' : '') + '</p>';
+  }
+
   // ---------- directorio de clientes (interfaz; hoy implementación local) ----------
   N.clientDirectory = {
     lookup: async function (alyc, comitente) {
@@ -154,9 +191,23 @@
     var install = S.installEvt ? '<div class="installtip"><b>Instalá la app en tu teléfono</b> para tenerla a mano. <button class="btn sm amarillo" id="btnInstall">Instalar</button></div>'
       : isIos() && !isStandalone() ? '<div class="installtip"><b>Para instalarla en tu iPhone:</b> tocá el botón Compartir de Safari y elegí "Agregar a inicio".</div>' : '';
     setView('<h1>Hola' + (S.session && S.session.name ? ', ' + h(S.session.name) : '') + '</h1><p class="muted">Tres portafolios sugeridos, actualizados todos los meses. Valores en ' + (S.moneda === 'USD' ? 'dólares (CCL)' : 'pesos') + '.</p>' +
+      rotBannerHtml() +
       '<div class="pcards">' + cards + '</div>' +
       '<p><a class="btn sec" href="#/comparar">Comparar los tres</a></p>' + install + legalFoot());
+    var rb = $('rotClose'); if (rb) rb.onclick = function () { try { localStorage.setItem(ROT_VISTA_KEY, rb.dataset.d); } catch (e) { } renderHome(); };
     var bi = $('btnInstall'); if (bi) bi.onclick = async function () { S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; renderHome(); };
+  }
+  // Aviso de rotación reciente (hasta 10 días después). Se puede cerrar; vuelve con la próxima rotación.
+  function rotBannerHtml() {
+    var desde = E.addDays(E.todayART(), -10);
+    var rot = S.portfolios.filter(function (p) { return p.currentEffectiveFrom && p.currentEffectiveFrom >= desde; });
+    if (!rot.length) return '';
+    var ultima = rot.map(function (p) { return p.currentEffectiveFrom; }).sort().pop(), vista = null;
+    try { vista = localStorage.getItem(ROT_VISTA_KEY); } catch (e) { }
+    if (vista === ultima) return '';
+    return '<div class="rotbanner"><button class="iconbtn" id="rotClose" data-d="' + h(ultima) + '" aria-label="Cerrar aviso">✕</button>' +
+      '<b>Nueva rotación · ' + E.fmtDate(ultima) + '</b><div class="s">Mirá qué cambió en cada portafolio:</div>' +
+      '<div class="links">' + rot.map(function (p) { return '<a href="#/p/' + p.slug + '/rotaciones">' + h(p.name) + ' ›</a>'; }).join('') + '</div></div>';
   }
   // Sparkline de los últimos 30 días (calculada por el robot en stats.sparkline). Se oculta si no hay datos.
   function sparkHtml(p, st) {
@@ -209,8 +260,17 @@
         '<div class="hc"><div class="l">Resultado</div><div class="v ' + pc(v) + '">' + E.fmtPct(v) + '</div></div></div>';
     }).join('');
     var comp = E.compositionByType(cur.holdings, S.insMap).map(function (c) { return { label: tipo(c.type), value: c.weightPct }; });
-    return '<div class="card"><h3>Composición</h3>' + C.donut({ slices: comp }) + '</div>' +
-      '<div class="card"><h3>Activos</h3><p class="legal">Resultado de cada activo desde su precio de compra, en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '.</p>' + rows + delayNote() + '</div>' +
+    var vs = S.versions[slug] || [], prev = vs.length > 1 ? vs[vs.length - 2] : null;
+    var cambios = prev && E.diffHoldings(prev, cur).changed
+      ? '<div class="card"><h3>Qué cambió en la última rotación</h3><p class="legal">Rotación del ' + E.fmtDate(cur.effectiveFrom) + ', comparada con la composición anterior.</p>' + cambiosHtml(prev, cur) +
+        '<p class="mt"><a class="legal" href="#/p/' + slug + '/rotaciones">Ver todas las rotaciones ›</a></p></div>' : '';
+    var monto = montoGuardado();
+    var calc = '<div class="card"><h3>¿Cuánto comprar de cada activo?</h3><p class="legal">Escribí el monto que querés invertir y te mostramos cómo se reparte según los porcentajes del portafolio, a precios actuales.</p>' +
+      '<label class="f"><span>Monto a invertir (' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + ')</span><input type="text" id="calcMonto" inputmode="numeric" autocomplete="off" placeholder="Ej. 1.000.000" value="' + (monto ? E.fmtNum(monto, 0) : '') + '"></label>' +
+      '<div id="calcOut">' + calcHtml(cur, monto) + '</div>' +
+      '<p class="legal">Cálculo orientativo: no incluye comisiones ni derechos de mercado, y los precios pueden diferir de los de tu bróker al momento de operar. En bonos, letras y ONs la cantidad son nominales y puede haber mínimos de compra.</p></div>';
+    return cambios + '<div class="card"><h3>Composición</h3>' + C.donut({ slices: comp }) + '</div>' +
+      '<div class="card"><h3>Activos</h3><p class="legal">Resultado de cada activo desde su precio de compra, en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + '.</p>' + rows + delayNote() + '</div>' + calc +
       (cur.rationale ? '<div class="card"><h3>Por qué esta composición</h3><p>' + h(cur.rationale).replace(/\n/g, '<br>') + '</p></div>' : '');
   }
 
@@ -245,14 +305,16 @@
     var book = E.quoteBook(quotes, S.live);
     var segs = E.computeSegments(vs, book, {});
     var evs = vs.slice().reverse().map(function (v, idx) {
+      var prevV = vs[vs.length - 2 - idx] || null;
       var ss = segs.filter(function (s) { return s.versionId === v.id; });
       var r = ss.length ? { ars: E.chain(ss.map(function (s) { return s.returnArs; })), usd: E.chain(ss.map(function (s) { return s.returnUsd; })) } : null;
       var desde = ss.length ? ss[0].basisDate : null, hasta = ss.length ? ss[ss.length - 1].endDate : null;
       var hs = v.holdings.map(function (x) { var ins = S.insMap[x.ticker] || {}; return '<tr><td><b>' + h(x.ticker) + '</b> <small>' + h(tipo(ins.type)) + '</small></td><td class="num">' + E.fmtNum(x.weightPct, 0) + '%</td><td class="num">' + E.fmtArs(x.buyPriceArs) + '</td></tr>'; }).join('');
       return '<details class="ev" ' + (idx === 0 ? 'open' : '') + '><summary>' + E.fmtDate(v.effectiveFrom) + (v.effectiveTo ? ' → ' + E.fmtDate(v.effectiveTo) : ' → hoy') + (r ? ' <span class="' + pc(mv(r)) + '">' + E.fmtPct(mv(r), 1) + '</span>' : '') + '</summary>' +
         '<div class="meta">' + v.holdings.length + ' activos · beta ' + E.fmtNum(E.betaPortfolio(v.holdings), 2) + (r ? ' · rendimiento del período en ' + (S.moneda === 'USD' ? 'dólares' : 'pesos') + ' (' + E.fmtDate(desde) + ' al ' + E.fmtDate(hasta) + ')' : ' · sin precios para medir este período') + '</div>' +
-        (v.rationale ? '<p class="mt">' + h(v.rationale).replace(/\n/g, '<br>') + '</p>' : '') +
-        '<div class="tablewrap"><table><thead><tr><th>Activo</th><th class="num">%</th><th class="num">Compra</th></tr></thead><tbody>' + hs + '</tbody></table></div></details>';
+        '<h4>Qué cambió</h4>' + cambiosHtml(prevV, v) +
+        (v.rationale ? '<h4>Por qué</h4><p>' + h(v.rationale).replace(/\n/g, '<br>') + '</p>' : '') +
+        '<h4>Composición completa</h4><div class="tablewrap"><table><thead><tr><th>Activo</th><th class="num">%</th><th class="num">Compra</th></tr></thead><tbody>' + hs + '</tbody></table></div></details>';
     }).join('');
     return '<div class="card"><h3>Línea de tiempo de rotaciones</h3><p class="legal">Cada rotación es un cambio de composición. Se muestra qué tenía el portafolio y cuánto rindió mientras estuvo vigente.</p><div class="tl">' + evs + '</div></div>';
   }
@@ -301,6 +363,13 @@
       if (g.classList.contains('on')) g.dataset.fixed = '1';
     });
     document.querySelectorAll('[data-ficha]').forEach(function (el) { el.onclick = function (e) { e.preventDefault(); e.stopPropagation(); openFicha(el.dataset.ficha); }; });
+    var cm = $('calcMonto');
+    if (cm) cm.oninput = function () {
+      var n = Number(cm.value.replace(/\D/g, '')) || 0;
+      cm.value = n ? E.fmtNum(n, 0) : '';
+      try { localStorage.setItem(MONTO_KEY, String(n)); } catch (e) { }
+      $('calcOut').innerHTML = calcHtml(currentVersion(slug), n);
+    };
     if (tab === 'simulador') {
       $('simGo').onclick = function () { var d = $('simDate').value; if (!E.isValidDate(d)) return toast('Elegí una fecha'); runSim(slug, d); };
       $('simDate').onchange = function () { if (E.isValidDate(this.value)) runSim(slug, this.value); };

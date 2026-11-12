@@ -151,3 +151,26 @@ body.simulando .wrap.narrow { background: repeating-linear-gradient(135deg, tran
   .bottomnav a.on { background: var(--negro); color: var(--blanco); border-color: var(--negro); }
   .pcards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 }
+
+/* ---- qué cambió en una rotación ---- */
+.chgs { margin: 6px 0 2px; }
+.chg { display: grid; grid-template-columns: 74px auto 1fr auto; gap: 0 8px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--gris-4); font-size: 14px; }
+.chg:last-child { border-bottom: 0; }
+.chg .ct { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 0; border-radius: 999px; text-align: center; background: var(--gris-4); color: var(--negro); }
+.chg .ct.in { background: var(--negro); color: var(--blanco); }
+.chg .ct.out { background: var(--blanco); border: 1px solid var(--negro); }
+.chg .ct.up { background: var(--amarillo); }
+.chg .cn { color: var(--gris-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chg .cp { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.tl .ev h4 { font-family: var(--fuente); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--gris-2); margin: 14px 0 4px; }
+
+/* ---- aviso de nueva rotación (inicio) ---- */
+.rotbanner { position: relative; background: var(--amarillo); color: var(--negro); border-radius: 12px; padding: 12px 40px 12px 14px; margin-bottom: 12px; }
+.rotbanner .s { font-size: 13px; margin: 2px 0 8px; }
+.rotbanner .links { display: flex; gap: 8px; flex-wrap: wrap; }
+.rotbanner .links a { background: var(--negro); color: var(--blanco); text-decoration: none; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; }
+.rotbanner .iconbtn { position: absolute; right: 8px; top: 8px; color: var(--negro); }
+
+/* ---- calculadora por monto ---- */
+#calcMonto { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 10px 12px; max-width: 280px; }
+table.calc td small { color: var(--gris-2); font-weight: 400; }
