@@ -56,7 +56,7 @@
       var a = await db.getAccount(alyc, comitente);
       if (!a || a.isActive === false) return null;
       // El saludo lo define el gestor de clientes (campo "Cómo saludarlo"); si falta, el nombre.
-      return { clientId: a.clientId || a.id, displayName: a.greeting || a.clientName || '' };
+      return { clientId: a.clientId || a.id, displayName: a.greeting || '' };
     }
   };
 
@@ -121,10 +121,12 @@
       if (!num) { $('loginMsg').textContent = 'Escribí tu número de comitente.'; return; }
       this.disabled = true; $('loginMsg').textContent = 'Verificando…';
       try {
+        await db.ensureAnon();
         var r = await N.clientDirectory.lookup(alycSel, num);
         if (!r) { $('loginMsg').textContent = 'No encontramos esa cuenta en ' + alycSel + '. Revisá el número o escribinos.'; this.disabled = false; return; }
         S.session = { alyc: alycSel, comitente: num, name: r.displayName, clientId: r.clientId, at: Date.now() };
         saveSession(S.session);
+        await db.openSession(alycSel, num);
         if (!S.loaded) await loadBase();
         renderHeader(); location.hash = '#/'; route();
       } catch (e) { console.error(e); $('loginMsg').textContent = 'No se pudo verificar. Probá de nuevo en un momento.'; this.disabled = false; }
@@ -365,20 +367,25 @@
     else if (top === 'p') renderDetail(parts[1], parts[2]);
     else if (top === 'comparar') renderComparar();
     else if (top === 'aprender') renderHome(); // fichas educativas desactivadas por ahora
-    else if (top === 'salir') { clearSession(); S.session = null; location.hash = '#/'; renderHeader(); renderLogin('Cerraste la sesión.'); }
+    else if (top === 'salir') { clearSession(); S.session = null; S.loaded = false; db.closeSession(); location.hash = '#/'; renderHeader(); renderLogin('Cerraste la sesión.'); }
     else renderHome();
   }
 
   // ---------- arranque ----------
   (async function init() {
     try { S.moneda = localStorage.getItem(MONEDA_KEY) === 'USD' ? 'USD' : 'ARS'; } catch (e) { }
-    db.init();
+    db.init('cliente');
     if (N.ticker) N.ticker.init();
     window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); S.installEvt = e; if (S.session && !location.hash.replace('#/', '')) renderHome(); });
     window.addEventListener('hashchange', route);
     S.session = loadSession();
     if (S.session) {
-      try { await loadBase(); } catch (e) { console.error(e); setView('<div class="card"><p>No se pudieron cargar los datos. Revisá tu conexión y recargá.</p></div>'); return; }
+      try { await db.openSession(S.session.alyc, S.session.comitente); await loadBase(); } catch (e) {
+        console.error(e);
+        // Sin permiso = la sesión ya no es válida (cuenta dada de baja o sesión vencida): se vuelve a pedir el comitente.
+        if (e && e.code === 'permission-denied') { clearSession(); S.session = null; renderHeader(); renderLogin('Tu sesión venció. Ingresá de nuevo con tu número de comitente.'); return; }
+        setView('<div class="card"><p>No se pudieron cargar los datos. Revisá tu conexión y recargá.</p></div>'); return;
+      }
     }
     renderHeader(); route();
     if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js'); } catch (e) { } }

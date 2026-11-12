@@ -9,13 +9,14 @@
      portfolios/{slug}                       + campo stats (resumen calculado)
      portfolios/{slug}/versions/{id}         una por rotación
      portfolios/{slug}/monthly_returns/{ym}  legacy + calculados
-     authorized_accounts/{ALYC_COMITENTE}
+     authorized_accounts/{ALYC_COMITENTE}    índice de login: SIN nombre completo (es legible desde afuera)
+     sessions/{uid}                          con qué comitente entró cada sesión de cliente
      education/{slug}
      jobs/ingesta
    ============================================================ */
 (function () {
   var N = window.NORTE = window.NORTE || {};
-  var db = null;
+  var db = null, auth = null, closing = null;
 
   function ts() { return firebase.firestore.FieldValue.serverTimestamp(); }
   function docs(snap) { return snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); }
@@ -28,6 +29,13 @@
   function accountId(alyc, comitente) {
     return String(alyc || '').trim().toUpperCase() + '_' + String(comitente || '').trim().replace(/\D/g, '');
   }
+  // Saludo corto a partir de un nombre completo (nunca devuelve el nombre entero).
+  function saludoDe(nombre, alyc) {
+    nombre = String(nombre || '').trim();
+    if (!nombre) return '';
+    if (N.clientes && N.clientes.saludoSugerido) { try { return N.clientes.saludoSugerido(nombre, alyc, 'PH').saludo || ''; } catch (e) { } }
+    return nombre.split(/[\s,]+/)[0];
+  }
   async function batched(items, fn) { // fn(batch, item) · lotes de 400
     for (var i = 0; i < items.length; i += 400) {
       var b = db.batch();
@@ -37,13 +45,50 @@
   }
 
   N.db = {
-    init: function () {
-      if (!firebase.apps.length) firebase.initializeApp(N.firebaseConfig);
-      db = firebase.firestore();
-      // La app cliente no carga el SDK de Auth (no lo necesita).
-      return typeof firebase.auth === 'function' ? firebase.auth() : null;
+    // appName: la app cliente usa una instancia propia ('cliente') para que su sesión anónima
+    // no se mezcle con el login de Google del Panel (comparten dominio).
+    init: function (appName) {
+      var app;
+      try { app = appName ? firebase.app(appName) : firebase.app(); }
+      catch (e) { app = appName ? firebase.initializeApp(N.firebaseConfig, appName) : firebase.initializeApp(N.firebaseConfig); }
+      db = app.firestore();
+      auth = typeof app.auth === 'function' ? app.auth() : null;
+      return auth;
     },
     accountId: accountId,
+
+    // ---------- sesión del cliente ----------
+    // El cliente entra con una identidad anónima de Firebase y registra en sessions/{uid}
+    // con qué comitente entró. Las reglas sólo dejan leer los portafolios a quien tenga
+    // una sesión que apunte a una cuenta autorizada y activa.
+    // Devuelve el uid, o null si no se pudo (p. ej. el acceso anónimo todavía no está habilitado).
+    ensureAnon: async function () {
+      if (!auth) return null;
+      try {
+        if (closing) await closing; // si se está cerrando la sesión anterior, esperar a que termine
+        if (!auth.currentUser) {
+          await new Promise(function (ok) { var off = auth.onAuthStateChanged(function () { off(); ok(); }); });
+        }
+        if (!auth.currentUser) await auth.signInAnonymously();
+        return auth.currentUser ? auth.currentUser.uid : null;
+      } catch (e) { console.warn('Sesión anónima no disponible:', e.code || e.message); return null; }
+    },
+    openSession: async function (alyc, comitente) {
+      var uid = await N.db.ensureAnon();
+      if (!uid) return false;
+      try {
+        await db.collection('sessions').doc(uid).set({ accountId: accountId(alyc, comitente), at: ts() });
+        return true;
+      } catch (e) { console.warn('No se pudo registrar la sesión:', e.code || e.message); return false; }
+    },
+    closeSession: function () {
+      if (!auth || !auth.currentUser) return Promise.resolve();
+      var uid = auth.currentUser.uid;
+      closing = db.collection('sessions').doc(uid).delete().catch(function () { })
+        .then(function () { return auth.signOut(); }).catch(function () { })
+        .then(function () { closing = null; });
+      return closing;
+    },
 
     // ---------- catálogo ----------
     getInstruments: async function () {
@@ -203,7 +248,7 @@
     // ---------- comitentes ----------
     listAccounts: async function () {
       return docs(await db.collection('authorized_accounts').get()).sort(function (a, b) {
-        return (a.clientName || '').localeCompare(b.clientName || '', 'es');
+        return (a.greeting || a.clientName || '').localeCompare(b.greeting || b.clientName || '', 'es');
       });
     },
     getAccount: async function (alyc, comitente) {
@@ -214,7 +259,7 @@
       var id = accountId(a.alyc, a.comitente);
       await db.collection('authorized_accounts').doc(id).set(clean({
         alyc: String(a.alyc).trim().toUpperCase(), comitente: String(a.comitente).trim().replace(/\D/g, ''),
-        clientName: (a.clientName || '').trim(), isActive: a.isActive !== false, updatedAt: ts()
+        greeting: saludoDe(a.clientName, a.alyc), clientName: firebase.firestore.FieldValue.delete(), isActive: a.isActive !== false, updatedAt: ts()
       }), { merge: true });
       return id;
     },
@@ -222,7 +267,7 @@
       await batched(list, function (b, a) {
         b.set(db.collection('authorized_accounts').doc(accountId(a.alyc, a.comitente)), clean({
           alyc: String(a.alyc).trim().toUpperCase(), comitente: String(a.comitente).trim().replace(/\D/g, ''),
-          clientName: (a.clientName || '').trim(), isActive: true, updatedAt: ts()
+          greeting: saludoDe(a.clientName, a.alyc), clientName: firebase.firestore.FieldValue.delete(), isActive: true, updatedAt: ts()
         }), { merge: true });
       });
     },
@@ -257,7 +302,9 @@
       }), { merge: true });
       accounts.forEach(function (a) {
         b.set(db.collection('authorized_accounts').doc(accountId(a.alyc, a.comitente)), {
-          alyc: a.alyc, comitente: a.comitente, clientId: id, clientName: (c.name || '').trim(), greeting: (c.greeting || '').trim(),
+          // Sólo el saludo: el nombre completo NO va acá (este índice se puede consultar desde afuera).
+          alyc: a.alyc, comitente: a.comitente, clientId: id, greeting: (c.greeting || '').trim(),
+          clientName: firebase.firestore.FieldValue.delete(),
           isActive: c.isActive !== false, updatedAt: ts()
         }, { merge: true });
       });
@@ -307,6 +354,20 @@
         }
       }
       return { nuevos: nuevos, actualizados: actualizados };
+    },
+    // Limpieza (una vez): saca el nombre completo de las cuentas del índice de login que todavía lo
+    // tengan. Si la cuenta no tenía saludo, usa el del cliente o uno sugerido. Devuelve cuántas tocó.
+    scrubAccountNames: async function (clients) {
+      var saludos = {};
+      (clients || []).forEach(function (c) { saludos[c.id] = (c.greeting || '').trim(); });
+      var sucias = docs(await db.collection('authorized_accounts').get()).filter(function (a) { return a.clientName !== undefined; });
+      await batched(sucias, function (b, a) {
+        b.set(db.collection('authorized_accounts').doc(a.id), {
+          clientName: firebase.firestore.FieldValue.delete(),
+          greeting: (a.greeting || '').trim() || saludos[a.clientId] || saludoDe(a.clientName, a.alyc)
+        }, { merge: true });
+      });
+      return sucias.length;
     },
     // Cuentas del índice de login que no pertenecen a ningún cliente (p. ej. cuentas de prueba viejas).
     listOrphanAccounts: async function () {

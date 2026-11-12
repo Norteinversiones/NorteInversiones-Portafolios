@@ -55,6 +55,10 @@
     $('login').classList.add('hidden');
     $('loading').classList.remove('hidden');
     try { await loadAll(); } catch (e) { console.error(e); toast('Error al cargar: ' + e.message, true); }
+    // Limpieza automática: el índice de login no debe guardar nombres completos (se puede consultar desde afuera).
+    db.listClients().then(function (cl) { return db.scrubAccountNames(cl); })
+      .then(function (n) { if (n) toast('Seguridad: se quitó el nombre completo de ' + n + ' cuentas del índice de login'); })
+      .catch(function (e) { console.error('Limpieza de nombres:', e); });
     $('loading').classList.add('hidden');
     $('app').classList.remove('hidden');
     render();
@@ -473,13 +477,13 @@
     var sec = $('tab-comitentes');
     if (!S.accounts.length) { sec.innerHTML = '<p class="muted">Cargando…</p>'; S.accounts = await db.listAccounts(); }
     var q = (S.accQ || '').toLowerCase();
-    var list = S.accounts.filter(function (a) { return !q || (a.clientName || '').toLowerCase().indexOf(q) >= 0 || String(a.comitente).indexOf(q) >= 0; });
+    var list = S.accounts.filter(function (a) { return !q || (a.greeting || a.clientName || '').toLowerCase().indexOf(q) >= 0 || String(a.comitente).indexOf(q) >= 0; });
     var html = '<div class="grid2"><div class="card"><div class="row between"><h2>Comitentes autorizados</h2><span class="tag ok">' + S.accounts.length + ' cuentas</span></div>' +
       '<div class="sub">Con estas cuentas entran los clientes: ALyC + número de comitente. Un cliente con cuenta en dos ALyCs tiene dos filas.</div>' +
       '<input type="search" id="accQ" placeholder="Buscar por nombre o comitente" value="' + h(S.accQ || '') + '">' +
       '<div class="tablewrap mt"><table><thead><tr><th>ALyC</th><th>Comitente</th><th>Cliente</th><th></th></tr></thead><tbody>' +
       list.slice(0, 300).map(function (a) {
-        return '<tr><td>' + h(a.alyc) + '</td><td class="tnum">' + h(a.comitente) + '</td><td>' + h(a.clientName) + (a.isActive === false ? ' <span class="tag">inactivo</span>' : '') + '</td><td><button class="iconbtn" data-del="' + h(a.id) + '" title="Borrar">✕</button></td></tr>';
+        return '<tr><td>' + h(a.alyc) + '</td><td class="tnum">' + h(a.comitente) + '</td><td>' + h(a.greeting || a.clientName) + (a.isActive === false ? ' <span class="tag">inactivo</span>' : '') + '</td><td><button class="iconbtn" data-del="' + h(a.id) + '" title="Borrar">✕</button></td></tr>';
       }).join('') + '</tbody></table>' + (list.length > 300 ? '<p class="muted">Se muestran 300 de ' + list.length + '. Usá el buscador.</p>' : '') + '</div></div>';
     html += '<div><div class="card"><h2>Agregar cuenta</h2><div class="row">' +
       '<label class="f"><span>ALyC</span><select id="accAlyc">' + N.ALYCS.map(function (a) { return '<option>' + a + '</option>'; }).join('') + '</select></label>' +

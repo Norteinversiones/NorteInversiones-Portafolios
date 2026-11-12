@@ -238,7 +238,7 @@
     // ---- cuentas sueltas ----
     if (CS.orphans.length) {
       html += '<div class="card flat"><h3>Cuentas sin cliente</h3><p class="sub">Quedaron del sistema anterior (por ejemplo cuentas de prueba). Podés borrarlas.</p>' +
-        CS.orphans.map(function (a) { return '<div class="row between"><span>' + alycLabel(a.alyc) + ' ' + h(a.comitente) + ' · ' + h(a.clientName || '') + '</span><button class="btn sm danger" data-act="delorphan" data-id="' + h(a.id) + '">Borrar</button></div>'; }).join('') + '</div>';
+        CS.orphans.map(function (a) { return '<div class="row between"><span>' + alycLabel(a.alyc) + ' ' + h(a.comitente) + ' · ' + h(a.greeting || '') + '</span><button class="btn sm danger" data-act="delorphan" data-id="' + h(a.id) + '">Borrar</button></div>'; }).join('') + '</div>';
     }
     html += '</div></div>';
     sec.innerHTML = html;

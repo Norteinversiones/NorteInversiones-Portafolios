@@ -1,8 +1,9 @@
 rules_version = '2';
 
 // Reglas de seguridad · App de portafolios de Norte Inversiones.
-// Lectura: abierta para lo que ve el cliente (el acceso por comitente se
-// controla en la app). Escritura: sólo el mail admin con Google.
+// Lectura de portafolios: sólo clientes con sesión válida (ver sessions) o el admin.
+// Precios, catálogo y cinta de cotizaciones siguen abiertos (son datos de mercado).
+// Escritura: sólo el mail admin con Google.
 // La ingesta de precios escribe con cuenta de servicio y NO pasa por acá.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -13,6 +14,17 @@ service cloud.firestore {
           && request.auth.token.email in ["norteahorro@gmail.com"];
     }
 
+    // Cliente con sesión: entró con identidad anónima y su documento sessions/{uid}
+    // apunta a una cuenta comitente autorizada y activa. Si la cuenta se da de baja
+    // o se borra, deja de poder leer al instante.
+    function esCliente() {
+      let s = get(/databases/$(database)/documents/sessions/$(request.auth.uid)).data;
+      return get(/databases/$(database)/documents/authorized_accounts/$(s.accountId)).data.get('isActive', true) != false;
+    }
+    function puedeVer() {
+      return isAdmin() || (request.auth != null && esCliente());
+    }
+
     // Catálogo de instrumentos y precios (diarios + intradía).
     match /instruments/{ticker}  { allow read: if true;      allow write: if isAdmin(); }
     match /quotes/{fecha}        { allow read: if true;      allow write: if isAdmin(); }
@@ -21,28 +33,41 @@ service cloud.firestore {
 
     // Portafolios, versiones (rotaciones) y rendimientos mensuales.
     match /portfolios/{slug} {
-      allow read: if true;
+      allow read: if puedeVer();
       allow write: if isAdmin();
       match /versions/{versionId} {
         // Los borradores sólo los ve el admin.
-        allow read: if resource.data.status == "published" || isAdmin();
+        allow read: if isAdmin() || (resource.data.status == "published" && request.auth != null && esCliente());
         allow write: if isAdmin();
       }
-      match /monthly_returns/{ym} { allow read: if true; allow write: if isAdmin(); }
+      match /monthly_returns/{ym} { allow read: if puedeVer(); allow write: if isAdmin(); }
     }
 
     // Fichas educativas.
     match /education/{slug} {
-      allow read: if resource.data.isPublished == true || isAdmin();
+      allow read: if isAdmin() || (resource.data.isPublished == true && request.auth != null && esCliente());
       allow write: if isAdmin();
     }
 
     // Comitentes autorizados (índice de login, derivado de clients). Sólo se puede
     // consultar UN documento por su id (ALYC_COMITENTE); nunca listar la colección.
+    // No guarda el nombre completo del cliente: sólo el saludo.
     match /authorized_accounts/{id} {
-      allow get: if true;
+      allow get: if request.auth != null;
       allow list: if isAdmin();
       allow write: if isAdmin();
+    }
+
+    // Sesiones de clientes: cada identidad anónima escribe SOLO la suya, y sólo si
+    // apunta a una cuenta autorizada y activa. `at` queda como fecha del último ingreso.
+    match /sessions/{uid} {
+      allow get, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['accountId', 'at'])
+        && request.resource.data.accountId is string
+        && request.resource.data.at == request.time
+        && get(/databases/$(database)/documents/authorized_accounts/$(request.resource.data.accountId)).data.get('isActive', true) != false;
+      allow read, delete: if isAdmin();
     }
 
     // Cinta de cotizaciones (índices, commodities, MEP, riesgo país). La escribe el robot.
