@@ -526,6 +526,23 @@
   // ------------------------------------------------------------
   // Validación de una versión antes de publicar (§4, §11)
   // ------------------------------------------------------------
+  // Copia compacta de los meses (legacy + calculados) para guardar dentro del documento del
+  // portafolio (campo history). Evita leer monthly_returns mes por mes.
+  function packHistory(months) {
+    return (months || []).map(function (m) {
+      var o = { ym: m.ym, ars: Number(m.ars) || 0, usd: Number(m.usd) || 0, isLegacy: !!m.isLegacy, isClosed: !!m.isClosed };
+      if (!m.isLegacy) {
+        o.segments = m.segments || 0; o.basisDate = m.basisDate || null; o.basisIsPartial = !!m.basisIsPartial;
+        o.endDate = m.endDate || null; o.isLive = !!m.isLive;
+        if (m.missing && m.missing.length) o.missing = m.missing;
+        if (m.couponArs) o.couponArs = m.couponArs;
+        if (m.couponUsd) o.couponUsd = m.couponUsd;
+        if (m.payments && m.payments.length) o.payments = m.payments;
+      }
+      return o;
+    });
+  }
+
   // Cobros cargados en el catálogo → mapa por ticker para quoteBook.
   //   instruments: [{ ticker, payments: [{ date, interest, amort, currency }] }]
   function paymentsOf(instruments) {
@@ -642,7 +659,7 @@
     simulate: simulate, dailySeries: dailySeries, minSimulationDate: minSimulationDate, holdingsLive: holdingsLive,
     // composición
     betaPortfolio: betaPortfolio, weightTotal: weightTotal, compositionByType: compositionByType,
-    validateVersion: validateVersion, diffHoldings: diffHoldings, rotationMessage: rotationMessage, paymentsOf: paymentsOf,
+    validateVersion: validateVersion, diffHoldings: diffHoldings, rotationMessage: rotationMessage, paymentsOf: paymentsOf, packHistory: packHistory,
     // formato
     fmtNum: fmtNum, fmtPct: fmtPct, fmtArs: fmtArs, fmtUsd: fmtUsd, fmtDate: fmtDate, fmtMonth: fmtMonth, fmtMonthLong: fmtMonthLong
   };

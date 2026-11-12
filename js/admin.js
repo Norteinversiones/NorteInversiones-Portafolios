@@ -70,9 +70,13 @@
     $('loading').classList.remove('hidden');
     try { await loadAll(); } catch (e) { console.error(e); toast('Error al cargar: ' + e.message, true); }
     // Limpieza automática: el índice de login no debe guardar nombres completos (se puede consultar desde afuera).
-    db.listClients().then(function (cl) { return db.scrubAccountNames(cl); })
-      .then(function (n) { if (n) toast('Seguridad: se quitó el nombre completo de ' + n + ' cuentas del índice de login'); })
+    // Se repite en cada apertura sólo hasta que una pasada no encuentre nada (después ya no hace falta
+    // leer todos los clientes y cuentas cada vez que se abre el Panel).
+    if (!db.cache.get('norte_scrub_ok')) db.listClients().then(function (cl) { return db.scrubAccountNames(cl); })
+      .then(function (n) { if (n) toast('Seguridad: se quitó el nombre completo de ' + n + ' cuentas del índice de login'); else db.cache.set('norte_scrub_ok', 1); })
       .catch(function (e) { console.error('Limpieza de nombres:', e); });
+    // Catálogo consolidado (config/catalog) para la app de clientes y el robot: se mantiene igual a la colección.
+    db.syncCatalog(S.instruments).catch(function (e) { console.warn('Catálogo consolidado:', e.message); });
     $('loading').classList.add('hidden');
     $('app').classList.remove('hidden');
     render();
@@ -573,6 +577,7 @@
       }
       try {
         await db.saveInstrument(o); S.instruments = await db.getInstruments(); S.insMap = {}; S.instruments.forEach(function (i) { S.insMap[i.ticker] = i; }); S.editIns = null;
+        await db.syncCatalog(S.instruments).catch(function (e) { console.warn('Catálogo consolidado:', e.message); });
         if (conPagos && JSON.stringify(o.payments) !== antes) {
           // Cambiaron los cobros: se recalculan los portafolios (los meses ya cerrados no se tocan).
           busy(true); await reloadQuotes();
@@ -700,7 +705,7 @@
   async function renderAvisos() {
     var sec = $('tab-avisos');
     sec.innerHTML = '<p class="muted">Cargando…</p>';
-    var r = await Promise.all([db.getPushConfig(), db.getPushState(), db.listPushTokens()]);
+    var r = await Promise.all([db.getPushConfig(), db.getPushState(), db.listPushTokens(), db.getJobHealth()]);
     var cfg = r[0] || {}, st = r[1] || {}, toks = r[2], en = cfg.enabled || {};
     var nuevo = !r[0];
     var fer = (cfg.holidays || (nuevo ? FERIADOS_2026 : [])).slice().sort();
@@ -719,7 +724,7 @@
     html += '<div><div class="card"><h2>Estado</h2><table class="health"><tbody>' +
       '<tr><td>Dispositivos suscriptos</td><td><b>' + toks.length + '</b> · ' + Object.keys(cuentas).length + ' cuentas</td></tr>' +
       '<tr><td>Desactivaron apertura / cierre</td><td>' + no('open') + ' / ' + no('close') + '</td></tr>' +
-      '<tr><td>Última pasada del robot</td><td>' + (st.lastRun ? fmtTs(st.lastRun) : 'todavía no corrió') + '</td></tr>' +
+      '<tr><td>Última pasada del robot</td><td>' + (r[3] && r[3].push && r[3].push.at ? fmtTs(r[3].push.at) + (r[3].push.ok ? '' : ' · <span class="neg">con error</span>') : 'todavía no corrió') + '</td></tr>' +
       '<tr><td>Último aviso de apertura</td><td>' + (st.lastOpen ? E.fmtDate(st.lastOpen) : '—') + '</td></tr>' +
       '<tr><td>Último aviso de cierre</td><td>' + (st.lastClose ? E.fmtDate(st.lastClose) : '—') + '</td></tr>' +
       '<tr><td>Última rotación avisada</td><td>' + (st.rot ? S.portfolios.map(function (p) { return h(p.name) + ' ' + (st.rot[p.slug] ? E.fmtDate(st.rot[p.slug]) : '—'); }).join('<br>') : '—') + '</td></tr>' +

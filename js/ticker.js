@@ -47,9 +47,22 @@
     el.ontouchstart = function () { el.classList.toggle('paused'); };
   }
 
+  // La cinta se guarda en el navegador: el robot la actualiza cada 30 minutos en horario de mercado
+  // y fuera de horario no cambia, así que no hace falta leerla de la base en cada apertura.
+  var KEY = 'norte_ticker';
+  function ttl() {
+    var d = new Date(Date.now() - 3 * 3600e3), dow = d.getUTCDay(), m = d.getUTCHours() * 60 + d.getUTCMinutes();
+    return dow >= 1 && dow <= 5 && m >= 10 * 60 && m <= 20 * 60 + 15 ? 14 * 60e3 : 3 * 3600e3;
+  }
   async function load() {
-    try { render(await N.db.getMarketTicker()); }
-    catch (e) { console.warn('ticker:', e.message); }
+    try {
+      var c = N.db.cache.get(KEY);
+      if (c && c.doc && Date.now() - c.at < ttl()) { render(c.doc); return; }
+      var doc = N.db.cache.plano(await N.db.getMarketTicker());
+      N.db.cache.set(KEY, { at: Date.now(), doc: doc });
+      render(doc);
+    }
+    catch (e) { console.warn('ticker:', e.message); var old = N.db.cache.get(KEY); if (old && old.doc) render(old.doc); }
   }
 
   N.ticker = {

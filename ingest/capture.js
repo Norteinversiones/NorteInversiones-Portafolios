@@ -104,29 +104,38 @@ async function traerFx() {
 }
 
 // ---------- catálogo ----------
+// Catálogo completo (activos e inactivos), UNA sola lectura por corrida.
+// Primero el documento consolidado config/catalog (lo mantiene el Panel): 1 lectura en vez de una
+// por instrumento. Si no existe todavía, se lee la colección instruments como antes.
+let _catalogo = null;
+function catalogoCompleto(db) {
+  if (!_catalogo) _catalogo = (async function () {
+    try {
+      const m = await db.collection('config').doc('catalog').get();
+      if (m.exists && Array.isArray(m.data().items) && m.data().items.length) return m.data().items;
+    } catch (e) { log('config/catalog no disponible, uso la colección:', e.message); }
+    const snap = await db.collection('instruments').get();
+    if (!snap.empty) return snap.docs.map(function (d) { return Object.assign({ ticker: d.id }, d.data()); });
+    log('catálogo vacío en Firestore: siembro desde catalogo.json');
+    const seed = JSON.parse(fs.readFileSync(path.join(__dirname, 'catalogo.json'), 'utf8'));
+    const batch = db.batch();
+    seed.forEach(function (i, idx) {
+      batch.set(db.collection('instruments').doc(i.ticker), Object.assign({}, i, {
+        isActive: true,
+        order: idx,
+        educationSlug: i.type.toLowerCase().replace('_', '-'),
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      }));
+    });
+    await batch.commit();
+    return seed.map(function (i) { return Object.assign({ isActive: true }, i); });
+  })();
+  return _catalogo;
+}
 async function cargarCatalogo(db) {
-  const snap = await db.collection('instruments').get();
-  if (!snap.empty) {
-    return snap.docs
-      .map(function (d) { return Object.assign({ ticker: d.id }, d.data()); })
-      .filter(function (i) { return i.isActive !== false; });
-  }
-  log('catálogo vacío en Firestore: siembro desde catalogo.json');
-  const seed = JSON.parse(fs.readFileSync(path.join(__dirname, 'catalogo.json'), 'utf8'));
-  const batch = db.batch();
-  seed.forEach(function (i, idx) {
-    batch.set(db.collection('instruments').doc(i.ticker), Object.assign({}, i, {
-      isActive: true,
-      order: idx,
-      educationSlug: i.type.toLowerCase().replace('_', '-'),
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    }));
-  });
-  await batch.commit();
-  return seed.map(function (i) { return Object.assign({ isActive: true }, i); });
+  return (await catalogoCompleto(db)).filter(function (i) { return i.isActive !== false; });
 }
 
-// Precios de los tickers del catálogo, resueltos por priceSymbol.
 function preciosCatalogo(catalogo, mapa) {
   const prices = {}, missing = [];
   for (const ins of catalogo) {
@@ -321,37 +330,62 @@ async function correrMarket(db) {
 // Después de cada corrida: meses cerrados (una vez, inmutables) + mes en curso + resumen.
 const engine = require('../js/engine.js');
 
+// Lecturas por corrida (optimizado): portafolios (3) + versiones publicadas + los cierres de una
+// ventana corta, UNA sola vez para los tres portafolios. Los meses ya cerrados no se vuelven a
+// calcular ni a leer: salen de la copia guardada en el documento del portafolio (campo history).
 async function recalcularPortafolios(db) {
+  const hoy = fechaART();
+  const pagos = engine.paymentsOf(await catalogoCompleto(db));
   const ports = await db.collection('portfolios').get();
-  // Cobros de cupón / amortización cargados en el catálogo (instruments/{ticker}.payments).
-  const isnap = await db.collection('instruments').get();
-  const pagos = engine.paymentsOf(isnap.docs.map(function (d) { return Object.assign({ ticker: d.id }, d.data()); }));
-  for (const pd of ports.docs) {
-    const slug = pd.id;
-    try {
-      const vsnap = await pd.ref.collection('versions').where('status', '==', 'published').get();
-      const versions = vsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
-        .sort(function (a, b) { return a.effectiveFrom < b.effectiveFrom ? -1 : 1; });
-      const msnap = await pd.ref.collection('monthly_returns').get();
-      const existing = msnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
-      const legacy = existing.filter(function (m) { return m.isLegacy; });
 
-      let computed = { months: [] }, book = null;
-      if (versions.length) {
-        const from = engine.addDays(engine.monthStart(engine.monthOf(versions[0].effectiveFrom)), -10);
-        const qsnap = await db.collection('quotes').where('date', '>=', from).orderBy('date').get();
-        const quotes = qsnap.docs.filter(function (d) { return d.id !== 'live'; }).map(function (d) { return d.data(); });
-        const liveDoc = await db.collection('quotes').doc('live').get();
-        book = engine.quoteBook(quotes, liveDoc.exists ? liveDoc.data() : null, pagos);
-        computed = engine.computePortfolio(versions, book, {});
-      }
+  // 1) versiones y meses guardados de cada portafolio
+  const items = [];
+  for (const pd of ports.docs) {
+    const p = pd.data();
+    const vsnap = await pd.ref.collection('versions').where('status', '==', 'published').get();
+    const versions = vsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+      .sort(function (a, b) { return a.effectiveFrom < b.effectiveFrom ? -1 : 1; });
+    let existing;
+    if (Array.isArray(p.history)) existing = p.history;                 // 0 lecturas
+    else existing = (await pd.ref.collection('monthly_returns').get()).docs.map(function (d) { return d.data(); });  // sólo la primera vez
+    // Primer mes que hay que calcular: el más viejo que no esté guardado como cerrado.
+    let desdeMes = null;
+    if (versions.length) {
+      const meses = engine.monthsBetween(engine.monthOf(versions[0].effectiveFrom), engine.monthOf(hoy));
+      desdeMes = meses.find(function (ym) { return !existing.some(function (x) { return x.ym === ym && x.isClosed && !x.isLegacy; }); }) || engine.monthOf(hoy);
+    }
+    items.push({ ref: pd.ref, slug: pd.id, versions: versions, existing: existing, desdeMes: desdeMes });
+  }
+
+  // 2) cierres: una sola consulta para los tres portafolios, con la ventana mínima necesaria
+  const conVersiones = items.filter(function (it) { return it.desdeMes; });
+  let book = null;
+  if (conVersiones.length) {
+    const mesMin = conVersiones.map(function (it) { return it.desdeMes; }).sort()[0];
+    // Lo necesario: la base del mes más viejo a calcular (cierre anterior, con margen para feriados y
+    // arrastre) y los 30 días de la sparkline (con el mismo margen).
+    const a = engine.addDays(engine.monthStart(mesMin), -12), b = engine.addDays(hoy, -42);
+    const desde = a < b ? a : b;
+    const qsnap = await db.collection('quotes').where('date', '>=', desde).orderBy('date').get();
+    const quotes = qsnap.docs.filter(function (d) { return d.id !== 'live'; }).map(function (d) { return d.data(); });
+    const liveDoc = await db.collection('quotes').doc('live').get();
+    book = engine.quoteBook(quotes, liveDoc.exists ? liveDoc.data() : null, pagos);
+  }
+
+  // 3) cálculo y guardado
+  for (const it of items) {
+    try {
+      const existing = it.existing, legacy = existing.filter(function (m) { return m.isLegacy; });
+      const calculados = it.desdeMes ? engine.computePortfolio(it.versions, book, {}).months.filter(function (m) { return m.ym >= it.desdeMes; }) : [];
+      // meses cerrados anteriores a la ventana: se toman tal cual están guardados (inmutables)
+      const guardados = existing.filter(function (m) { return !m.isLegacy && m.isClosed && (!it.desdeMes || m.ym < it.desdeMes); });
 
       const batch = db.batch();
       let n = 0;
-      const merged = computed.months.map(function (m) {
+      const merged = guardados.concat(calculados.map(function (m) {
         const ex = existing.find(function (x) { return x.ym === m.ym; });
         if (ex && ex.isClosed && !ex.isLegacy) return ex;       // mes cerrado: inmutable
-        batch.set(pd.ref.collection('monthly_returns').doc(m.ym), {
+        batch.set(it.ref.collection('monthly_returns').doc(m.ym), {
           ym: m.ym, ars: m.ars, usd: m.usd, isLegacy: false, isClosed: !!m.isClosed, segments: m.segments,
           basisDate: m.basisDate || null, basisIsPartial: !!m.basisIsPartial, endDate: m.endDate || null,
           isLive: !!m.isLive, missing: m.missing || [], couponArs: m.couponArs || 0, couponUsd: m.couponUsd || 0, payments: m.payments || [],
@@ -359,13 +393,13 @@ async function recalcularPortafolios(db) {
         }, { merge: true });
         n++;
         return m;
-      });
+      }));
       const history = engine.buildHistory(legacy, merged);
       const cur = history.current;
       // Sparkline de la home: acumulado día a día de los últimos 30 días (mismo motor, calculado acá
       // para no cargarle el cálculo al navegador del cliente). null si no hay 2 puntos.
-      const sparkline = book ? engine.dailySeries(versions, book, { days: 30 }) : null;
-      batch.set(pd.ref, {
+      const sparkline = book && it.versions.length ? engine.dailySeries(it.versions, book, { days: 30 }) : null;
+      batch.set(it.ref, {
         stats: {
           accArs: history.accumulated.ars, accUsd: history.accumulated.usd, yearTotals: history.yearTotals,
           current: cur ? { ym: cur.ym, ars: cur.ars, usd: cur.usd, basisDate: cur.basisDate || null, basisIsPartial: !!cur.basisIsPartial,
@@ -375,12 +409,13 @@ async function recalcularPortafolios(db) {
           latestDate: book ? book.latestDate : null, isLive: !!(book && book.liveOk), computedAt: new Date().toISOString(),
           sparkline: sparkline
         },
+        history: engine.packHistory(history.months),
         statsAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       await batch.commit();
-      log('recalculado', slug + ':', n, 'meses escritos ·', versions.length, 'versiones · acum ARS', history.accumulated.ars.toFixed(2) + '%');
+      log('recalculado', it.slug + ':', n, 'meses escritos ·', it.versions.length, 'versiones · acum ARS', history.accumulated.ars.toFixed(2) + '%');
     } catch (e) {
-      log('ERROR recalculando', slug + ':', e.message);
+      log('ERROR recalculando', it.slug + ':', e.message);
     }
   }
 }
@@ -441,8 +476,7 @@ async function rendimientosDelDia(db, hoy) {
   // Sin rueda (feriado no cargado): los precios de hoy son idénticos al último cierre.
   const tks = Object.keys(live.prices || {});
   if (tks.length && tks.every(function (t) { return Number(live.prices[t]) === Number((prev.prices || {})[t]); })) return null;
-  const isnap = await db.collection('instruments').get();
-  const pagos = engine.paymentsOf(isnap.docs.map(function (d) { return Object.assign({ ticker: d.id }, d.data()); }));
+  const pagos = engine.paymentsOf(await catalogoCompleto(db));
   const book = engine.quoteBook(quotes, live, pagos);
   const ports = await db.collection('portfolios').get();
   const filas = [];
@@ -467,16 +501,20 @@ async function correrPush(db) {
   const stDoc = await stRef.get();
   const st = stDoc.exists ? stDoc.data() : {};
   const hoy = fechaART(), ahora = minutos(horaART());
-  const tsnap = await db.collection('push_tokens').get();
-  const todos = tsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).filter(function (t) { return t.token; });
+  // Los dispositivos se leen sólo si hay algo para mandar (una corrida sin novedades no los toca).
+  let _toks = null;
+  const dispositivos = async function () {
+    if (!_toks) { const tsnap = await db.collection('push_tokens').get(); _toks = tsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).filter(function (t) { return t.token; }); }
+    return _toks;
+  };
   const quiere = function (t, clave) { return !(t.prefs && t.prefs[clave] === false); };
-  const out = { dispositivos: todos.length, enviados: [] }, cambios = {};
+  const out = { enviados: [] }, cambios = {};
   const habil = !esFinDeSemana(hoy) && (cfg.holidays || []).indexOf(hoy) < 0;
   const abre = minutos(cfg.openTime || '10:30'), cierra = minutos(cfg.closeTime || '18:00');
 
   // --- prueba pedida desde el Panel ---
   if (cfg.testAt && cfg.testAt !== st.lastTestAt) {
-    const dest = todos.filter(function (t) { return !cfg.testTo || t.accountId === cfg.testTo; });
+    const dest = (await dispositivos()).filter(function (t) { return !cfg.testTo || t.accountId === cfg.testTo; });
     const r = await enviarPush(db, dest, { title: '✅ Prueba de avisos', body: 'Las notificaciones de Norte Inversiones funcionan en este dispositivo.', tag: 'prueba' });
     cambios.lastTestAt = cfg.testAt; cambios.lastTestResult = Object.assign({ at: new Date().toISOString(), destinatarios: dest.length }, r);
     out.enviados.push('prueba');
@@ -484,7 +522,7 @@ async function correrPush(db) {
 
   // --- apertura ---
   if (en.open !== false && habil && st.lastOpen !== hoy && ahora >= abre && ahora <= abre + 90) {
-    await enviarPush(db, todos.filter(function (t) { return quiere(t, 'open'); }),
+    await enviarPush(db, (await dispositivos()).filter(function (t) { return quiere(t, 'open'); }),
       { title: '🔔 Abrió el mercado', body: 'Ya opera la rueda en BYMA. Entrá para ver cómo vienen los portafolios.', tag: 'apertura', ttl: 3600 });
     cambios.lastOpen = hoy; out.enviados.push('apertura');
   }
@@ -496,7 +534,7 @@ async function correrPush(db) {
     if (dia && dia.filas.length) {
       const lineas = dia.filas.map(function (f) { return emojiRiesgo(f.riskLevel) + ' ' + f.name + ' ' + pctTxt(f.ars); });
       if (dia.fx) lineas.push('💵 MEP ' + engine.fmtArs(dia.fx.mep, 0) + ' · CCL ' + engine.fmtArs(dia.fx.ccl, 0));
-      await enviarPush(db, todos.filter(function (t) { return quiere(t, 'close'); }),
+      await enviarPush(db, (await dispositivos()).filter(function (t) { return quiere(t, 'close'); }),
         { title: '🔔 Cierre del mercado · ' + engine.fmtDate(hoy).slice(0, 5), body: lineas.join('\n'), tag: 'cierre', ttl: 6 * 3600 });
       out.enviados.push('cierre');
     } else log('cierre: hoy no hubo precios nuevos (¿feriado sin cargar?), no se avisa');
@@ -509,6 +547,8 @@ async function correrPush(db) {
     const ports = await db.collection('portfolios').get();
     for (const pd of ports.docs) {
       const p = pd.data(), slug = pd.id; if (!p.name) continue;
+      // Sin novedades (la rotación vigente ya está avisada): no hace falta leer las versiones.
+      if (rot[slug] && p.currentEffectiveFrom && p.currentEffectiveFrom <= rot[slug]) continue;
       const vsnap = await pd.ref.collection('versions').where('status', '==', 'published').get();
       const vs = vsnap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
         .filter(function (v) { return v.effectiveFrom && v.effectiveFrom <= hoy; })
@@ -523,7 +563,7 @@ async function correrPush(db) {
       if (d.out.length) partes.push('Sale: ' + lista(d.out));
       if (d.up.length) partes.push('Sube: ' + lista(d.up));
       if (d.down.length) partes.push('Baja: ' + lista(d.down));
-      await enviarPush(db, todos.filter(function (t) { return !(t.prefs && t.prefs.rot && t.prefs.rot[slug] === false); }),
+      await enviarPush(db, (await dispositivos()).filter(function (t) { return !(t.prefs && t.prefs.rot && t.prefs.rot[slug] === false); }),
         { title: emojiRiesgo(p.riskLevel) + ' Nueva rotación · ' + p.name, body: partes.length ? partes.join('\n') : 'Se publicó una nueva composición. Entrá para verla.',
           url: '#/p/' + slug + '/rotaciones', tag: 'rot-' + slug, ttl: 24 * 3600 });
       rot[slug] = cur.effectiveFrom; tocado = true; out.enviados.push('rotación ' + slug);
@@ -531,8 +571,8 @@ async function correrPush(db) {
     if (tocado) cambios.rot = rot;
   }
 
-  cambios.lastRun = new Date().toISOString(); cambios.devices = todos.length;
-  await stRef.set(cambios, { merge: true });
+  // Sólo se escribe el estado si cambió algo (la hora de la última pasada queda en jobs/ingesta).
+  if (Object.keys(cambios).length) await stRef.set(cambios, { merge: true });
   return out;
 }
 

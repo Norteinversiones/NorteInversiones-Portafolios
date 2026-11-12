@@ -163,6 +163,22 @@ Respaldo previo: `App portafolios\Respaldos\respaldo-app-portafolios-2026-11-11.
 - ⚠️ No se pudo probar el envío real desde el entorno de desarrollo (solo la lógica, con base y mensajería simuladas). Validar con "Enviar una prueba".
 - El robot de precios intradía (`precios.yml`) corre de 10:30 a 18:10 (ampliado el 12/11/2026). Si BYMA cambia el horario, alcanza con ajustar los tres cron de intradía: el modo se decide por descarte (los dos cron de cierre son `eod`, los dos de cinta son `market`, cualquier otro es `live`). Si se cambian los cron de cierre o de cinta, actualizar también esa expresión.
 
+### 8.7 Optimización de lecturas de Firestore (12/11/2026)
+Objetivo de los dueños: **gastar el mínimo posible de lecturas/escrituras** (plan Spark: 50.000 lecturas, 20.000 escrituras y 20.000 borrados por día). **Toda función nueva tiene que respetar estas reglas:**
+- **Nunca leer una colección entera si existe una copia consolidada.**
+  - Catálogo: `config/catalog` (`items[]`, `quotesRev`) = copia de `instruments` en 1 documento. La mantiene el Panel (`db.syncCatalog`, al abrir y al guardar un instrumento). App y robot la leen con `getCatalog()` / `catalogoCompleto()`, que caen a la colección si no existe.
+  - Meses: `portfolios/{slug}.history[]` = copia de `monthly_returns` (legacy + calculados; `engine.packHistory`). La escriben el Panel (`recompute.js`) y el robot en cada recálculo. La app la usa para Histórico y Comparar (0 lecturas extra). `monthly_returns` sigue siendo la fuente que edita el Panel.
+- **Caché en el navegador del cliente** (`db.cache`, sobre `localStorage`; las fechas de Firestore se guardan en milisegundos):
+  - `norte_base_v1`: portafolios, intradía, últimos 3 cierres, catálogo y ajustes de avisos. Vale 3 min en horario de mercado y 15 min fuera. No se usa si la app se abre desde una notificación (`?aviso=`).
+  - `norte_vs_{slug}`: versiones publicadas; se releen solo si cambia `versionsRev | currentVersionId | currentEffectiveFrom` del portafolio. **Toda operación que cambie versiones publicadas debe incrementar `versionsRev`** (ya lo hacen publicar, restaurar y retirar).
+  - `norte_quotes`: cierres diarios; solo se piden los días nuevos (y se repasan los últimos 4). Se descarta si cambia `config/catalog.quotesRev` (lo incrementa "Cargar un cierre a mano").
+  - `norte_ticker`: cinta (14 min en horario, 3 h fuera). `norte_ses_ok`: la sesión se reescribe a lo sumo una vez cada 20 h. `norte_push_st`: la suscripción a avisos se reescribe solo si cambia el token o pasaron 7 días.
+- **Robot:** catálogo una vez por corrida; cierres en una sola consulta para los tres portafolios, con ventana corta (12 días antes del mes más viejo sin cerrar, o 42 días antes de hoy); los meses cerrados salen de `history` y no se recalculan. El modo `push` no lee dispositivos ni versiones si no hay nada que mandar, y no escribe estado si nada cambió.
+- **Panel:** la limpieza de nombres corre solo hasta que una pasada no encuentra nada (`norte_scrub_ok`).
+- Las reglas de seguridad cuestan 2 lecturas extra por cada pedido protegido (sesión + cuenta): **agrupar** los datos protegidos en pocos pedidos.
+- Las fichas educativas ya no se cargan (están desactivadas). Si se reactivan, cargarlas solo al entrar a esa pantalla.
+- Medición (recorrido simulado de un cliente): abrir la app 66 → 13 documentos; reabrir en minutos 66 → 1; portafolio 27 → 4; comparar 44 → 0. Robot de precios por corrida: ~4 veces menos lecturas (más cuanto más historia haya).
+
 ## 9. Cómo probar antes de publicar
 
 1. `node tests/engine.test.js` → tiene que dar todas OK (hoy: 32/32). También corren solas en GitHub (workflow "Pruebas") en cada push.

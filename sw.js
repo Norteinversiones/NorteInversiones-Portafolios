@@ -6,7 +6,7 @@
    Los datos (Firestore) nunca pasan por acá.
    Cambiar VERSION en cada deploy para renovar la caché.
    ============================================================ */
-var VERSION = 'norte-v202611120230';
+var VERSION = 'norte-v202611120330';
 var SHELL = [
   './', './index.html', './manifest.webmanifest',
   './css/app.css', './css/client.css',
@@ -61,7 +61,8 @@ self.addEventListener('push', function (e) {
 // Al tocar el aviso: abre la app (o la trae al frente) en la pantalla que corresponde.
 self.addEventListener('notificationclick', function (e) {
   e.notification.close();
-  var destino = self.registration.scope + ((e.notification.data && e.notification.data.url) || '');
+  // ?aviso=... le indica a la app que venga con datos frescos (sin usar lo guardado en el navegador).
+  var destino = self.registration.scope + '?aviso=' + Date.now() + ((e.notification.data && e.notification.data.url) || '');
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (cs) {
     for (var i = 0; i < cs.length; i++) {
       if (cs[i].url.indexOf(self.registration.scope) === 0 && 'focus' in cs[i]) { if ('navigate' in cs[i]) cs[i].navigate(destino); return cs[i].focus(); }

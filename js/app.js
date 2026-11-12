@@ -135,20 +135,51 @@
   function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch (e) { } }
 
   // ---------- datos ----------
+  // ---- ahorro de lecturas de Firestore ----
+  // Los datos base (portafolios, precios, catálogo, ajustes de avisos) se guardan unos minutos en el
+  // navegador: reabrir o recargar la app dentro de ese plazo no le pide nada a la base.
+  // En horario de mercado los precios cambian cada 10 minutos (plazo corto); fuera de horario casi no cambian.
+  var BASE_KEY = 'norte_base_v1';
+  function enHorarioMercado() {
+    var d = new Date(Date.now() - 3 * 3600e3), dow = d.getUTCDay(), m = d.getUTCHours() * 60 + d.getUTCMinutes();
+    return dow >= 1 && dow <= 5 && m >= 10 * 60 + 25 && m <= 21 * 60;   // 10:25 a 21:00 ART (incluye los cierres de las 19:15 y 20:45)
+  }
+  function baseTtl() { return enHorarioMercado() ? 3 * 60e3 : 15 * 60e3; }
   async function loadBase() {
-    var r = await Promise.all([db.getPortfolios(), db.getLiveQuote(), db.getLastQuotes(3), db.getInstruments(), db.getEducation(false)]);
+    // Si la app se abrió tocando una notificación (?aviso=...), se piden datos frescos sí o sí.
+    var desdeAviso = /[?&]aviso=/.test(location.search);
+    if (desdeAviso) { try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { } }
+    var c = desdeAviso ? null : db.cache.get(BASE_KEY), r;
+    if (c && c.r && Date.now() - c.at < baseTtl() && c.who === S.session.alyc + '_' + S.session.comitente) r = c.r;
+    else {
+      // 5 consultas: portafolios (traen su histórico adentro), intradía, últimos 3 cierres, catálogo
+      // (1 documento) y ajustes de avisos. Las fichas educativas están desactivadas: no se piden.
+      r = db.cache.plano(await Promise.all([db.getPortfolios(), db.getLiveQuote(), db.getLastQuotes(3), db.getCatalog(), db.getPushConfig().catch(function () { return null; })]));
+      db.cache.set(BASE_KEY, { at: Date.now(), who: S.session.alyc + '_' + S.session.comitente, r: r });
+    }
     S.portfolios = r[0].filter(function (p) { return p.name; }); S.pmap = {}; S.portfolios.forEach(function (p) { S.pmap[p.slug] = p; });
-    S.instruments = r[3]; S.insMap = {}; S.instruments.forEach(function (i) { S.insMap[i.ticker] = i; });
+    S.instruments = r[3].items; S.quotesRev = r[3].quotesRev || 0; S.insMap = {}; S.instruments.forEach(function (i) { S.insMap[i.ticker] = i; });
     S.pays = E.paymentsOf(S.instruments); // cobros de cupón / amortización cargados en el catálogo
     S.live = r[1]; S.lastEod = r[2]; S.book = E.quoteBook(S.lastEod, S.live, S.pays);
-    S.education = r[4]; S.loaded = true;
+    S.pushCfg = r[4];
+    S.education = []; S.versions = {}; S.monthly = {}; S.loaded = true;
     pushInit(); // en segundo plano: no frena la carga
   }
-  async function ensureVersions(slug) { if (!S.versions[slug]) S.versions[slug] = await db.getVersions(slug, false); return S.versions[slug]; }
-  async function ensureMonthly(slug) { if (!S.monthly[slug]) S.monthly[slug] = await db.getMonthlyReturns(slug); return S.monthly[slug]; }
+  // Versiones: quedan guardadas en el navegador y sólo se vuelven a leer si el portafolio cambió.
+  async function ensureVersions(slug) {
+    if (!S.versions[slug]) { var p = S.pmap[slug] || {}; S.versions[slug] = await db.getVersionsCached(slug, [p.versionsRev || 0, p.currentVersionId || '', p.currentEffectiveFrom || ''].join('|')); }
+    return S.versions[slug];
+  }
+  // Meses: vienen dentro del documento del portafolio (campo history); 0 lecturas extra.
+  // Si un portafolio todavía no lo tiene, se leen de monthly_returns como antes.
+  async function ensureMonthly(slug) {
+    if (!S.monthly[slug]) { var p = S.pmap[slug] || {}; S.monthly[slug] = Array.isArray(p.history) && p.history.length ? p.history : await db.getMonthlyReturns(slug); }
+    return S.monthly[slug];
+  }
   async function ensureQuotesFrom(date) {
     if (S.quotes && S.quotesFrom <= date) return S.quotes;
-    S.quotes = await db.getQuotes(date); S.quotesFrom = date; return S.quotes;
+    // Los cierres viejos quedan guardados en el navegador: sólo se piden los días nuevos.
+    S.quotes = await db.getQuotesCached(date, S.quotesRev); S.quotesFrom = date; return S.quotes;
   }
   function currentVersion(slug) { var vs = S.versions[slug] || []; return vs.length ? vs[vs.length - 1] : null; }
   function historyOf(slug) {
@@ -170,7 +201,7 @@
   // NOTIFICACIONES (avisos de apertura, cierre y rotaciones)
   //   S.pushCfg = config/push (clave pública y horarios) · S.push = { token, prefs } si está suscripto.
   // ============================================================
-  var PUSH_KEY = 'norte_push';
+  var PUSH_KEY = 'norte_push', PUSH_ST = 'norte_push_st';
   function pushDefaults() { var rot = {}; S.portfolios.forEach(function (p) { rot[p.slug] = true; }); return { open: true, close: true, rot: rot }; }
   function pushSoportado() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && firebase.messaging; }
   // Estado para mostrar: 'off' (sin configurar en el Panel), 'ios' (hay que instalar la app), 'nosoporta',
@@ -190,17 +221,21 @@
     var token = await pushToken();
     if (!token) throw new Error('sin token');
     S.push = { token: token, prefs: prefs };
-    await db.saveMyPush({ token: token, accountId: db.accountId(S.session.alyc, S.session.comitente), prefs: prefs });
+    var acc = db.accountId(S.session.alyc, S.session.comitente);
+    await db.saveMyPush({ token: token, accountId: acc, prefs: prefs });
     try { localStorage.setItem(PUSH_KEY, '1'); } catch (e) { }
+    db.cache.set(PUSH_ST, { token: token, prefs: prefs, acc: acc, at: Date.now() });
   }
   // Al abrir la app: lee los ajustes y, si este dispositivo ya estaba suscripto, renueva el registro.
   async function pushInit() {
     try {
-      S.pushCfg = await db.getPushConfig();
+      // S.pushCfg ya vino con los datos base. Si este dispositivo está suscripto, se compara el token
+      // actual con el guardado acá: si es el mismo (y se registró hace menos de 7 días) no se toca la base.
       var marcado = false; try { marcado = localStorage.getItem(PUSH_KEY) === '1'; } catch (e) { }
       if (S.pushCfg && S.pushCfg.vapidKey && pushSoportado() && Notification.permission === 'granted' && marcado && S.session) {
-        var mio = await db.getMyPush();
-        await pushGuardar(mio && mio.prefs ? mio.prefs : pushDefaults());
+        var st = db.cache.get(PUSH_ST), token = await pushToken();
+        if (st && st.token === token && st.acc === db.accountId(S.session.alyc, S.session.comitente) && Date.now() - st.at < 7 * 86400e3) S.push = { token: token, prefs: st.prefs };
+        else { var mio = st ? null : await db.getMyPush(); await pushGuardar(st && st.prefs ? st.prefs : mio && mio.prefs ? mio.prefs : pushDefaults()); }
       }
     } catch (e) { console.warn('Avisos:', e.message || e); }
     if (S.session && !location.hash.replace(/^#\/?/, '')) renderHome();
@@ -239,7 +274,7 @@
     var off = $('pushOff');
     if (off) off.onclick = async function () {
       try { await db.deleteMyPush(); } catch (x) { }
-      S.push = null; try { localStorage.removeItem(PUSH_KEY); } catch (x) { }
+      S.push = null; try { localStorage.removeItem(PUSH_KEY); } catch (x) { } db.cache.del(PUSH_ST);
       toast('Avisos desactivados'); renderAvisos();
     };
     document.querySelectorAll('[data-pk]').forEach(function (c) {
@@ -276,7 +311,7 @@
         if (!r) { $('loginMsg').textContent = 'No encontramos esa cuenta en ' + alycSel + '. Revisá el número o escribinos.'; this.disabled = false; return; }
         S.session = { alyc: alycSel, comitente: num, name: r.displayName, clientId: r.clientId, at: Date.now() };
         saveSession(S.session);
-        await db.openSession(alycSel, num);
+        await db.openSession(alycSel, num, true);
         if (!S.loaded) await loadBase();
         renderHeader(); location.hash = '#/'; route();
       } catch (e) { console.error(e); $('loginMsg').textContent = 'No se pudo verificar. Probá de nuevo en un momento.'; this.disabled = false; }
@@ -558,7 +593,7 @@
     else if (top === 'comparar') renderComparar();
     else if (top === 'avisos') renderAvisos();
     else if (top === 'aprender') renderHome(); // fichas educativas desactivadas por ahora
-    else if (top === 'salir') { if (S.push) { db.deleteMyPush().catch(function () { }); S.push = null; try { localStorage.removeItem(PUSH_KEY); } catch (e) { } } clearSession(); S.session = null; S.loaded = false; db.closeSession(); location.hash = '#/'; renderHeader(); renderLogin('Cerraste la sesión.'); }
+    else if (top === 'salir') { db.cache.del(BASE_KEY); db.cache.del(PUSH_ST); if (S.push) { db.deleteMyPush().catch(function () { }); S.push = null; try { localStorage.removeItem(PUSH_KEY); } catch (e) { } } clearSession(); S.session = null; S.loaded = false; db.closeSession(); location.hash = '#/'; renderHeader(); renderLogin('Cerraste la sesión.'); }
     else renderHome();
   }
 
@@ -574,7 +609,7 @@
       try { await db.openSession(S.session.alyc, S.session.comitente); await loadBase(); } catch (e) {
         console.error(e);
         // Sin permiso = la sesión ya no es válida (cuenta dada de baja o sesión vencida): se vuelve a pedir el comitente.
-        if (e && e.code === 'permission-denied') { clearSession(); S.session = null; renderHeader(); renderLogin('Tu sesión venció. Ingresá de nuevo con tu número de comitente.'); return; }
+        if (e && e.code === 'permission-denied') { db.cache.del(BASE_KEY); db.cache.del('norte_ses_ok'); clearSession(); S.session = null; renderHeader(); renderLogin('Tu sesión venció. Ingresá de nuevo con tu número de comitente.'); return; }
         setView('<div class="card"><p>No se pudieron cargar los datos. Revisá tu conexión y recargá.</p></div>'); return;
       }
     }

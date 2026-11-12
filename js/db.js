@@ -37,6 +37,20 @@
     if (N.clientes && N.clientes.saludoSugerido) { try { return N.clientes.saludoSugerido(nombre, alyc, 'PH').saludo || ''; } catch (e) { } }
     return nombre.split(/[\s,]+/)[0];
   }
+  // ---------- caché local (ahorra lecturas de Firestore) ----------
+  // Se guarda en el navegador lo que no cambia (o cambia poco) para no volver a pedirlo.
+  function lsGet(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { try { localStorage.removeItem(k); } catch (x) { } } }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { } }
+  // Firestore devuelve fechas como objetos Timestamp: para guardarlas en caché se pasan a milisegundos.
+  function plano(o) {
+    if (o == null || typeof o !== 'object') return o;
+    if (typeof o.toMillis === 'function') return o.toMillis();
+    if (Array.isArray(o)) return o.map(plano);
+    var r = {}; Object.keys(o).forEach(function (k) { r[k] = plano(o[k]); }); return r;
+  }
+  function inc() { return firebase.firestore.FieldValue.increment(1); }
+
   async function batched(items, fn) { // fn(batch, item) · lotes de 400
     for (var i = 0; i < items.length; i += 400) {
       var b = db.batch();
@@ -56,7 +70,7 @@
       auth = typeof app.auth === 'function' ? app.auth() : null;
       return auth;
     },
-    accountId: accountId,
+    accountId: accountId, cache: { get: lsGet, set: lsSet, del: lsDel, plano: plano },
 
     // ---------- sesión del cliente ----------
     // El cliente entra con una identidad anónima de Firebase y registra en sessions/{uid}
@@ -74,15 +88,22 @@
         return auth.currentUser ? auth.currentUser.uid : null;
       } catch (e) { console.warn('Sesión anónima no disponible:', e.code || e.message); return null; }
     },
-    openSession: async function (alyc, comitente) {
+    // forzar=true (ingreso con comitente): escribe siempre, aunque haya una marca local.
+    openSession: async function (alyc, comitente, forzar) {
       var uid = await N.db.ensureAnon();
       if (!uid) return false;
+      // La sesión queda guardada en Firestore; sólo se reescribe una vez por día (registra el
+      // último ingreso) o si cambió la cuenta. Así abrir la app no gasta una escritura cada vez.
+      var id = accountId(alyc, comitente), marca = lsGet('norte_ses_ok');
+      if (!forzar && marca && marca.uid === uid && marca.id === id && Date.now() - marca.at < 20 * 3600e3) return true;
       try {
-        await db.collection('sessions').doc(uid).set({ accountId: accountId(alyc, comitente), at: ts() });
+        await db.collection('sessions').doc(uid).set({ accountId: id, at: ts() });
+        lsSet('norte_ses_ok', { uid: uid, id: id, at: Date.now() });
         return true;
       } catch (e) { console.warn('No se pudo registrar la sesión:', e.code || e.message); return false; }
     },
     closeSession: function () {
+      lsDel('norte_ses_ok');
       if (!auth || !auth.currentUser) return Promise.resolve();
       var uid = auth.currentUser.uid;
       closing = db.collection('sessions').doc(uid).delete().catch(function () { })
@@ -101,6 +122,27 @@
       var id = String(ins.ticker).trim().toUpperCase();
       await db.collection('instruments').doc(id).set(clean(Object.assign({}, ins, { ticker: id, updatedAt: ts() })), { merge: true });
       return id;
+    },
+    // Catálogo para la app de clientes y el robot: UN solo documento (config/catalog) con todos los
+    // instrumentos, en vez de leer uno por uno. Lo mantiene el Panel (syncCatalog). Si todavía no
+    // existe o no se puede leer, se usa la colección completa como antes.
+    getCatalog: async function () {
+      try {
+        var d = await db.collection('config').doc('catalog').get();
+        if (d.exists && Array.isArray(d.data().items) && d.data().items.length) return { items: d.data().items.slice().sort(byField('order')), quotesRev: d.data().quotesRev || 0, fromMirror: true };
+      } catch (e) { }
+      return { items: await N.db.getInstruments(), quotesRev: 0, fromMirror: false };
+    },
+    // (Panel) Deja config/catalog igual a la colección instruments. Sólo escribe si cambió algo.
+    syncCatalog: async function (instruments) {
+      var items = (instruments || []).map(function (i) {
+        return clean({ ticker: i.ticker, name: i.name, type: i.type, order: i.order, isActive: i.isActive, priceSymbol: i.priceSymbol, underlying: i.underlying,
+          cedearRatio: i.cedearRatio, usdBasis: i.usdBasis, educationSlug: i.educationSlug, payments: i.payments && i.payments.length ? i.payments : undefined });
+      });
+      var ref = db.collection('config').doc('catalog'), cur = await ref.get();
+      if (cur.exists && JSON.stringify(cur.data().items || []) === JSON.stringify(items)) return false;
+      await ref.set({ items: items, n: items.length, updatedAt: ts() }, { merge: true });
+      return true;
     },
 
     // ---------- portafolios ----------
@@ -121,8 +163,12 @@
     savePortfolio: async function (slug, data) {
       await db.collection('portfolios').doc(slug).set(clean(Object.assign({}, data, { updatedAt: ts() })), { merge: true });
     },
-    saveStats: async function (slug, stats) {
-      await db.collection('portfolios').doc(slug).set({ stats: stats, statsAt: ts() }, { merge: true });
+    // history: copia de todos los meses (legacy + calculados) dentro del documento del portafolio,
+    // para que la app de clientes y el robot no tengan que leer monthly_returns mes por mes.
+    saveStats: async function (slug, stats, history) {
+      var data = { stats: stats, statsAt: ts() };
+      if (history) data.history = history;
+      await db.collection('portfolios').doc(slug).set(data, { merge: true });
     },
 
     // ---------- versiones (rotaciones) ----------
@@ -131,6 +177,15 @@
       var col = db.collection('portfolios').doc(slug).collection('versions');
       var snap = all ? await col.get() : await col.where('status', '==', 'published').get();
       return docs(snap).sort(byField('effectiveFrom'));
+    },
+    // (App de clientes) Versiones publicadas con caché local: sólo se vuelven a leer de Firestore
+    // cuando el portafolio cambió (rev = versionsRev + versión vigente del documento del portafolio).
+    getVersionsCached: async function (slug, rev) {
+      var k = 'norte_vs_' + slug, c = lsGet(k);
+      if (c && c.rev === rev && Array.isArray(c.list)) return c.list;
+      var list = plano(await N.db.getVersions(slug, false));
+      lsSet(k, { rev: rev, list: list });
+      return list;
     },
     saveVersion: async function (slug, id, data) {
       var col = db.collection('portfolios').doc(slug).collection('versions');
@@ -164,6 +219,8 @@
       if (!last.length) {
         b.set(db.collection('portfolios').doc(slug), { currentVersionId: draft.id, currentEffectiveFrom: draft.effectiveFrom, updatedAt: ts() }, { merge: true });
       }
+      // versionsRev: contador que le avisa a la app de clientes que tiene que volver a leer las versiones.
+      b.set(db.collection('portfolios').doc(slug), { versionsRev: inc() }, { merge: true });
       await b.commit();
     },
 
@@ -187,6 +244,7 @@
         replacedBy: firebase.firestore.FieldValue.delete(), replacedAt: firebase.firestore.FieldValue.delete(), updatedAt: ts()
       }, { merge: true });
       if (!later.length) b.set(db.collection('portfolios').doc(slug), { currentVersionId: id, currentEffectiveFrom: target.effectiveFrom, updatedAt: ts() }, { merge: true });
+      b.set(db.collection('portfolios').doc(slug), { versionsRev: inc() }, { merge: true });
       await b.commit();
     },
     // Manda una versión publicada a "replaced" (duplicados). Si era la vigente, la vigente pasa a la publicada más nueva.
@@ -197,7 +255,7 @@
       b.set(col.doc(id), { status: 'replaced', replacedAt: ts(), updatedAt: ts() }, { merge: true });
       var rest = all.filter(function (v) { return v.id !== id && v.status === 'published'; }).sort(byField('effectiveFrom'));
       var cur = rest.length ? rest[rest.length - 1] : null;
-      b.set(db.collection('portfolios').doc(slug), { currentVersionId: cur ? cur.id : null, currentEffectiveFrom: cur ? cur.effectiveFrom : null, updatedAt: ts() }, { merge: true });
+      b.set(db.collection('portfolios').doc(slug), { currentVersionId: cur ? cur.id : null, currentEffectiveFrom: cur ? cur.effectiveFrom : null, versionsRev: inc(), updatedAt: ts() }, { merge: true });
       await b.commit();
     },
 
@@ -211,6 +269,21 @@
       var q = db.collection('quotes').orderBy('date');
       if (fromDate) q = q.where('date', '>=', fromDate);
       return docs(await q.get()).filter(function (x) { return x.id !== 'live' && x.isEod !== false; });
+    },
+    // (App de clientes) Cierres desde `fromDate` con caché local. Un cierre viejo no cambia, así que
+    // se guarda en el navegador y sólo se piden a Firestore los días nuevos (y se repasan los últimos
+    // 4 días, por si el robot corrigió un cierre reciente). `rev` (config/catalog.quotesRev) cambia
+    // cuando se carga un cierre a mano desde el Panel: ahí se descarta lo guardado.
+    getQuotesCached: async function (fromDate, rev) {
+      var k = 'norte_quotes', c = lsGet(k);
+      if (!c || c.rev !== (rev || 0) || !c.from || !Array.isArray(c.list)) c = { rev: rev || 0, from: null, list: [] };
+      var pedirDesde;
+      if (!c.from || fromDate < c.from) { pedirDesde = fromDate; c.list = []; c.from = fromDate; }   // falta historia más vieja: se pide todo el tramo
+      else { var ult = c.list.length ? c.list[c.list.length - 1].date : c.from; var d = new Date(ult + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 4); pedirDesde = d.toISOString().slice(0, 10); if (pedirDesde < c.from) pedirDesde = c.from; }
+      var nuevos = plano(await N.db.getQuotes(pedirDesde)).map(function (q) { return { date: q.date, isEod: q.isEod, noTrading: q.noTrading, prices: q.prices, fx: q.fx }; });
+      c.list = c.list.filter(function (q) { return q.date < pedirDesde; }).concat(nuevos);
+      lsSet(k, c);
+      return c.list.filter(function (q) { return q.date >= fromDate; });
     },
     getLastQuotes: async function (n) {
       return docs(await db.collection('quotes').orderBy('date', 'desc').limit(n || 5).get())
@@ -226,6 +299,8 @@
         date: date, isEod: true, source: 'manual', prices: prices, fx: fx, stale: {}, missing: [],
         n: Object.keys(prices).length, manualBy: user || null, capturedAt: ts()
       });
+      // Un cierre cargado a mano puede pisar uno ya guardado en el navegador de los clientes: se avisa.
+      await db.collection('config').doc('catalog').set({ quotesRev: inc() }, { merge: true });
     },
 
     // ---------- rendimientos mensuales ----------

@@ -50,7 +50,7 @@
       latestDate: book ? book.latestDate : null, isLive: !!(book && book.liveOk),
       computedAt: new Date().toISOString()
     };
-    await db.saveStats(slug, stats);
+    await db.saveStats(slug, stats, E.packHistory(history.months));
     return { history: history, computed: computed, stats: stats };
   };
 })();
