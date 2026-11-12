@@ -43,7 +43,7 @@ La app queda en `https://<usuario>.github.io/<repositorio>/`.
 
 | Cuándo | Qué hace |
 |---|---|
-| Lunes a viernes, cada 10 min de 11:00 a 17:50 | Intradía: actualiza `quotes/live` |
+| Lunes a viernes, cada 10 min de 10:30 a 18:10 | Intradía: actualiza `quotes/live` |
 | Lunes a viernes 19:15 y 20:45 | Cierre del día: crea `quotes/AAAA-MM-DD` (histórico) |
 
 Feriados: si los precios son idénticos al último cierre, el día se guarda marcado como

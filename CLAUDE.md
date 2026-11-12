@@ -161,7 +161,7 @@ Respaldo previo: `App portafolios\Respaldos\respaldo-app-portafolios-2026-11-11.
 - **Panel → Avisos:** interruptores por tipo, horarios, feriados, clave pública (VAPID), estado, y "Enviar una prueba" a los dispositivos de un comitente (sale en la próxima pasada del robot).
 - **Puesta en marcha manual (una vez):** generar el par de claves en Firebase → Configuración del proyecto → Cloud Messaging → Certificados push web, pegar la clave pública en Panel → Avisos, y publicar las reglas nuevas (`config`, `push_tokens`).
 - ⚠️ No se pudo probar el envío real desde el entorno de desarrollo (solo la lógica, con base y mensajería simuladas). Validar con "Enviar una prueba".
-- ⚠️ El robot de precios intradía (`precios.yml`) todavía corre de 11:00 a 17:50; con el horario nuevo 10:30-18:00 conviene ampliarlo (pendiente).
+- El robot de precios intradía (`precios.yml`) corre de 10:30 a 18:10 (ampliado el 12/11/2026). Si BYMA cambia el horario, alcanza con ajustar los tres cron de intradía: el modo se decide por descarte (los dos cron de cierre son `eod`, los dos de cinta son `market`, cualquier otro es `live`). Si se cambian los cron de cierre o de cinta, actualizar también esa expresión.
 
 ## 9. Cómo probar antes de publicar
 
@@ -174,7 +174,7 @@ Respaldo previo: `App portafolios\Respaldos\respaldo-app-portafolios-2026-11-11.
 
 | Cuándo (hora Argentina, lun-vie) | Qué hace |
 |---|---|
-| Cada 10 min, 11:00-17:50 | intradía → `quotes/live` |
+| Cada 10 min, 10:30-18:10 | intradía → `quotes/live` |
 | 19:15 y 20:45 | cierre → `quotes/AAAA-MM-DD` + recálculo de portafolios |
 | Cada 30 min, 10:00-18:30, y 20:00 | cinta de mercado → `market/ticker` |
 | Cada 10 min, 10:02-18:52; cada 30 min el resto (todos los días) | notificaciones push (`capture.js push`) |
@@ -208,5 +208,4 @@ Visual:
 - Mejor aprovechamiento en escritorio (hoy ancho máx. 760 px).
 - Modo oscuro; esqueletos de carga en vez de "Cargando…".
 
-Otros:
-- Ampliar el horario del robot de precios intradía a 10:30-18:00 (hoy 11:00-17:50).
+
